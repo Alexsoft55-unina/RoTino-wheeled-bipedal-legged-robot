@@ -36,7 +36,7 @@ Il workspace contiene due leggi di controllo intercambiabili e gli strumenti per
 Ubuntu 22.04, ROS 2 Humble, Gazebo Fortress, Python 3.10.
 
 ```bash
-cd rotino_ws
+cd RoTino_ws
 rosdep install --from-paths src --ignore-src -r -y --rosdistro humble
 pip install pyqtgraph        # non è dichiarato nei package.xml: rosdep non lo installa
 ```
