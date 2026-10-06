@@ -1,0 +1,231 @@
+<?xml version="1.0"?>
+<!-- RoTino_BOT(II): URDF conversion of RoTino_BOT(II).xml (MuJoCo). All frames, masses and joint axes match the MJCF. -->
+<robot name="rotino" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:arg name="controllers_file" default="$(find rotino_description)/config/rotino_controllers.yaml"/>
+
+  <xacro:property name="seg" value="0.0919"/>
+  <xacro:property name="leg_seg_length" value="0.13"/>
+  <xacro:property name="hip_y" value="0.095"/>
+  <xacro:property name="wheel_y" value="0.052"/>
+  <xacro:property name="wheel_radius" value="0.06"/>
+  <xacro:property name="wheel_length" value="0.056"/>
+  <xacro:property name="hub_radius" value="0.025"/>
+  <xacro:property name="hub_length" value="0.062"/>
+
+  <!-- Hip/knee are torque-controlled through ros2_control (leg_effort_controller), as required by the
+       virtual model control of the WBR controller. -->
+  <xacro:property name="leg_damping" value="0.8"/>
+  <xacro:property name="leg_effort" value="60.0"/>
+  <!-- MuJoCo wheel motor: gear 18, ctrlrange [-1, 1] -> max 18 Nm -->
+  <xacro:property name="wheel_effort" value="18.0"/>
+
+  <material name="torso_mat"><color rgba="0.55 0.55 0.58 1"/></material>
+  <material name="ballast_mat"><color rgba="0.20 0.20 0.22 1"/></material>
+  <material name="leg_mat"><color rgba="0.75 0.18 0.12 1"/></material>
+  <material name="wheel_mat"><color rgba="0.03 0.03 0.03 1"/></material>
+  <material name="hub_mat"><color rgba="0.10 0.70 0.55 1"/></material>
+
+  <!-- ===================== Torso ===================== -->
+  <link name="base_link">
+    <visual>
+      <origin xyz="0.025 0 0"/>
+      <geometry><box size="0.15 0.19 0.11"/></geometry>
+      <material name="torso_mat"/>
+    </visual>
+    <collision>
+      <origin xyz="0.025 0 0"/>
+      <geometry><box size="0.15 0.19 0.11"/></geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0.025 0 0"/>
+      <mass value="2.50"/>
+      <inertia ixx="0.0100417" ixy="0" ixz="0" iyy="0.0072083" iyz="0" izz="0.0122083"/>
+    </inertial>
+  </link>
+
+  <joint name="ballast_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="ballast_link"/>
+    <origin xyz="0.045 0 -0.045"/>
+  </joint>
+
+  <link name="ballast_link">
+    <visual>
+      <geometry><box size="0.07 0.14 0.036"/></geometry>
+      <material name="ballast_mat"/>
+    </visual>
+    <collision>
+      <geometry><box size="0.07 0.14 0.036"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="0.35"/>
+      <inertia ixx="0.00060947" ixy="0" ixz="0" iyy="0.00018072" iyz="0" izz="0.00071458"/>
+    </inertial>
+  </link>
+
+  <!-- ===================== Legs ===================== -->
+  <xacro:macro name="leg" params="side reflect">
+    <joint name="${side}_hip" type="revolute">
+      <parent link="base_link"/>
+      <child link="${side}_thigh_link"/>
+      <origin xyz="0 ${reflect*hip_y} 0"/>
+      <axis xyz="0 1 0"/>
+      <limit lower="-0.9" upper="0.9" effort="${leg_effort}" velocity="100.0"/>
+      <dynamics damping="${leg_damping}"/>
+    </joint>
+
+    <link name="${side}_thigh_link">
+      <visual>
+        <origin xyz="${-seg/2} 0 ${-seg/2}" rpy="0 ${-3*pi/4} 0"/>
+        <geometry><cylinder radius="0.014" length="${leg_seg_length}"/></geometry>
+        <material name="leg_mat"/>
+      </visual>
+      <collision>
+        <origin xyz="${-seg/2} 0 ${-seg/2}" rpy="0 ${-3*pi/4} 0"/>
+        <geometry><cylinder radius="0.014" length="${leg_seg_length}"/></geometry>
+      </collision>
+      <inertial>
+        <origin xyz="${-seg/2} 0 ${-seg/2}" rpy="0 ${-3*pi/4} 0"/>
+        <mass value="0.18"/>
+        <inertia ixx="0.00026232" ixy="0" ixz="0" iyy="0.00026232" iyz="0" izz="0.00001764"/>
+      </inertial>
+    </link>
+
+    <joint name="${side}_knee" type="revolute">
+      <parent link="${side}_thigh_link"/>
+      <child link="${side}_shank_link"/>
+      <origin xyz="${-seg} 0 ${-seg}"/>
+      <axis xyz="0 1 0"/>
+      <limit lower="-0.9" upper="0.9" effort="${leg_effort}" velocity="100.0"/>
+      <dynamics damping="${leg_damping}"/>
+    </joint>
+
+    <link name="${side}_shank_link">
+      <visual>
+        <origin xyz="${seg/2} 0 ${-seg/2}" rpy="0 ${3*pi/4} 0"/>
+        <geometry><cylinder radius="0.012" length="${leg_seg_length}"/></geometry>
+        <material name="leg_mat"/>
+      </visual>
+      <collision>
+        <origin xyz="${seg/2} 0 ${-seg/2}" rpy="0 ${3*pi/4} 0"/>
+        <geometry><cylinder radius="0.012" length="${leg_seg_length}"/></geometry>
+      </collision>
+      <inertial>
+        <origin xyz="${seg/2} 0 ${-seg/2}" rpy="0 ${3*pi/4} 0"/>
+        <mass value="0.16"/>
+        <inertia ixx="0.00023109" ixy="0" ixz="0" iyy="0.00023109" iyz="0" izz="0.00001152"/>
+      </inertial>
+    </link>
+
+    <joint name="${side}_wheel_joint" type="continuous">
+      <parent link="${side}_shank_link"/>
+      <child link="${side}_wheel_link"/>
+      <origin xyz="${seg} ${reflect*wheel_y} ${-seg}"/>
+      <axis xyz="0 1 0"/>
+      <limit effort="${wheel_effort}" velocity="200.0"/>
+      <dynamics damping="0.02"/>
+    </joint>
+
+    <link name="${side}_wheel_link">
+      <visual>
+        <origin rpy="${pi/2} 0 0"/>
+        <geometry><cylinder radius="${wheel_radius}" length="${wheel_length}"/></geometry>
+        <material name="wheel_mat"/>
+      </visual>
+      <visual>
+        <origin rpy="${pi/2} 0 0"/>
+        <geometry><cylinder radius="${hub_radius}" length="${hub_length}"/></geometry>
+        <material name="hub_mat"/>
+      </visual>
+      <collision>
+        <origin rpy="${pi/2} 0 0"/>
+        <geometry><cylinder radius="${wheel_radius}" length="${wheel_length}"/></geometry>
+      </collision>
+      <!-- wheel 0.32 kg + hub 0.06 kg; iyy includes the MuJoCo wheel armature (0.002),
+           ixx/izz raised so the tensor stays physically valid (ixx + izz >= iyy) -->
+      <inertial>
+        <mass value="0.38"/>
+        <inertia ixx="0.0013" ixy="0" ixz="0" iyy="0.00259475" iyz="0" izz="0.0013"/>
+      </inertial>
+    </link>
+
+    <gazebo reference="${side}_wheel_link">
+      <mu1>2.2</mu1>
+      <mu2>2.2</mu2>
+      <sensor name="${side}_wheel_contact" type="contact">
+        <always_on>true</always_on>
+        <update_rate>500</update_rate>
+        <contact>
+          <collision>${side}_wheel_link_collision</collision>
+        </contact>
+      </sensor>
+    </gazebo>
+
+    <gazebo reference="${side}_thigh_link">
+      <mu1>1.8</mu1>
+      <mu2>1.8</mu2>
+    </gazebo>
+    <gazebo reference="${side}_shank_link">
+      <mu1>1.8</mu1>
+      <mu2>1.8</mu2>
+    </gazebo>
+  </xacro:macro>
+
+  <xacro:leg side="left" reflect="1"/>
+  <xacro:leg side="right" reflect="-1"/>
+
+  <!-- ===================== Sensors ===================== -->
+  <gazebo reference="base_link">
+    <mu1>1.8</mu1>
+    <mu2>1.8</mu2>
+    <sensor name="imu_sensor" type="imu">
+      <always_on>true</always_on>
+      <update_rate>500</update_rate>
+      <topic>/rotino/imu</topic>
+    </sensor>
+  </gazebo>
+
+  <!-- ===================== ros2_control ===================== -->
+  <xacro:macro name="effort_joint" params="name limit">
+    <joint name="${name}">
+      <command_interface name="effort">
+        <param name="min">${-limit}</param>
+        <param name="max">${limit}</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+    </joint>
+  </xacro:macro>
+
+  <ros2_control name="GazeboSimSystem" type="system">
+    <hardware>
+      <plugin>gz_ros2_control/GazeboSimSystem</plugin>
+    </hardware>
+    <xacro:effort_joint name="left_hip" limit="${leg_effort}"/>
+    <xacro:effort_joint name="right_hip" limit="${leg_effort}"/>
+    <xacro:effort_joint name="left_knee" limit="${leg_effort}"/>
+    <xacro:effort_joint name="right_knee" limit="${leg_effort}"/>
+    <xacro:effort_joint name="left_wheel_joint" limit="${wheel_effort}"/>
+    <xacro:effort_joint name="right_wheel_joint" limit="${wheel_effort}"/>
+  </ros2_control>
+
+  <gazebo>
+    <plugin filename="gz_ros2_control-system" name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+      <parameters>$(arg controllers_file)</parameters>
+    </plugin>
+
+    <!-- Ground-truth base pose/twist in the world frame (MuJoCo read these directly from qpos). -->
+    <plugin filename="ignition-gazebo-odometry-publisher-system" name="ignition::gazebo::systems::OdometryPublisher">
+      <odom_frame>world</odom_frame>
+      <robot_base_frame>base_link</robot_base_frame>
+      <odom_publish_frequency>500</odom_publish_frequency>
+      <odom_topic>/rotino/odom</odom_topic>
+      <tf_topic>/rotino/odom_tf</tf_topic>
+      <dimensions>3</dimensions>
+    </plugin>
+
+    <!-- The hold-until-release DetachableJoint lives on the static rotino_anchor model in rotino_world.sdf. -->
+  </gazebo>
+</robot>

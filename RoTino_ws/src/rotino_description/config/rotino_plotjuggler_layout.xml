@@ -1,0 +1,115 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<root>
+ <tabbed_widget parent="main_window" name="Main Window">
+  <Tab tab_name="CoM lean" containers="1">
+   <Container>
+    <DockSplitter count="1" orientation="-" sizes="1">
+     <DockArea name="perspective-0">
+      <plot style="Lines" mode="TimeSeries" flip_y="false" flip_x="false">
+       <range top="1" bottom="-1" left="0" right="60"/>
+       <limitY/>
+       <curve color="#1f77b4" name="/rotino/debug/data.1"/>
+       <curve color="#d62728" name="/rotino/debug/data.2"/>
+      </plot>
+     </DockArea>
+    </DockSplitter>
+   </Container>
+  </Tab>
+  <Tab tab_name="Position and speed" containers="1">
+   <Container>
+    <DockSplitter count="1" orientation="-" sizes="1">
+     <DockArea name="perspective-1">
+      <plot style="Lines" mode="TimeSeries" flip_y="false" flip_x="false">
+       <range top="1" bottom="-1" left="0" right="60"/>
+       <limitY/>
+       <curve color="#2ca02c" name="/rotino/debug/data.3"/>
+       <curve color="#9467bd" name="/rotino/debug/data.4"/>
+      </plot>
+     </DockArea>
+    </DockSplitter>
+   </Container>
+  </Tab>
+  <Tab tab_name="Wheel cmd and ground force" containers="1">
+   <Container>
+    <DockSplitter count="1" orientation="-" sizes="1">
+     <DockArea name="perspective-2">
+      <plot style="Lines" mode="TimeSeries" flip_y="false" flip_x="false">
+       <range top="1" bottom="-1" left="0" right="60"/>
+       <limitY/>
+       <curve color="#ff7f0e" name="/rotino/debug/data.5"/>
+       <curve color="#8c564b" name="/rotino/debug/data.8"/>
+      </plot>
+     </DockArea>
+    </DockSplitter>
+   </Container>
+  </Tab>
+  <Tab tab_name="Height and wheel gap" containers="1">
+   <Container>
+    <DockSplitter count="1" orientation="-" sizes="1">
+     <DockArea name="perspective-3">
+      <plot style="Lines" mode="TimeSeries" flip_y="false" flip_x="false">
+       <range top="1" bottom="-1" left="0" right="60"/>
+       <limitY/>
+       <curve color="#17becf" name="/rotino/debug/data.6"/>
+       <curve color="#e377c2" name="/rotino/debug/data.9"/>
+      </plot>
+     </DockArea>
+    </DockSplitter>
+   </Container>
+  </Tab>
+  <Tab tab_name="Planar tracking" containers="1">
+   <Container>
+    <DockSplitter count="1" orientation="-" sizes="1">
+     <DockArea name="perspective-4">
+      <plot style="Lines" mode="TimeSeries" flip_y="false" flip_x="false">
+       <range top="1" bottom="-1" left="0" right="60"/>
+       <limitY/>
+       <curve color="#1f77b4" name="/rotino/planar/data.1"/>
+       <curve color="#ff7f0e" name="/rotino/planar/data.4"/>
+       <curve color="#2ca02c" name="/rotino/planar/data.2"/>
+       <curve color="#d62728" name="/rotino/planar/data.5"/>
+       <curve color="#9467bd" name="/rotino/planar/data.8"/>
+      </plot>
+     </DockArea>
+    </DockSplitter>
+   </Container>
+  </Tab>
+  <Tab tab_name="Tracking error x/y" containers="1">
+   <Container>
+    <DockSplitter count="1" orientation="-" sizes="1">
+     <DockArea name="perspective-5">
+      <plot style="Lines" mode="TimeSeries" flip_y="false" flip_x="false">
+       <range top="1" bottom="-1" left="0" right="60"/>
+       <limitY/>
+       <curve color="#d62728" name="/rotino/tracking_error/data.0"/>
+       <curve color="#1f77b4" name="/rotino/tracking_error/data.1"/>
+      </plot>
+     </DockArea>
+    </DockSplitter>
+   </Container>
+  </Tab>
+  <currentTabIndex index="0"/>
+ </tabbed_widget>
+ <use_relative_time_offset enabled="1"/>
+ <!-- - - - - - - - - - - - - - -->
+ <!-- - - - - - - - - - - - - - -->
+ <Plugins>
+  <plugin ID="DataLoad CSV"/>
+  <plugin ID="ROS2 Topic Subscriber">
+   <use_header_stamp value="false"/>
+   <use_renaming_rules value="true"/>
+   <discard_large_arrays value="true"/>
+   <max_array_size value="100"/>
+   <boolean_strings_to_number value="true"/>
+   <remove_suffix_from_single_element_arrays value="false"/>
+   <selected_topics value="/rotino/debug;/rotino/planar;/rotino/tracking_error;/joint_states;/rotino/odom;/rotino/imu"/>
+  </plugin>
+ </Plugins>
+ <!-- - - - - - - - - - - - - - -->
+ <previouslyLoaded_Datafiles/>
+ <previouslyLoaded_Streamer name="ROS2 Topic Subscriber"/>
+ <!-- - - - - - - - - - - - - - -->
+ <customMathEquations/>
+ <snippets/>
+ <!-- - - - - - - - - - - - - - -->
+</root>

@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>rotino_description</name>
+  <version>0.1.0</version>
+  <description>RoTino wheeled biped: robot description (URDF, world, controller config) and the shared
+    model library used by every control law, so that a comparison changes the controller and nothing else.</description>
+  <maintainer email="enzogpt55@libero.it">Alessando Prisco</maintainer>
+  <license>TODO: License declaration</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>ros_gz_interfaces</exec_depend>
+  <exec_depend>urdfdom_py</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>ros_gz_sim</exec_depend>
+  <exec_depend>ros_gz_bridge</exec_depend>
+  <exec_depend>gz_ros2_control</exec_depend>
+  <exec_depend>controller_manager</exec_depend>
+  <exec_depend>joint_state_broadcaster</exec_depend>
+  <exec_depend>effort_controllers</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

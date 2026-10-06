@@ -1,0 +1,9 @@
+source;share/rotino_benchmark/hook/pythonpath.ps1
+source;share/rotino_benchmark/hook/pythonpath.dsv
+source;share/rotino_benchmark/hook/pythonpath.sh
+source;share/rotino_benchmark/hook/ament_prefix_path.ps1
+source;share/rotino_benchmark/hook/ament_prefix_path.dsv
+source;share/rotino_benchmark/hook/ament_prefix_path.sh
+source;../../build/rotino_benchmark/share/rotino_benchmark/hook/pythonpath_develop.ps1
+source;../../build/rotino_benchmark/share/rotino_benchmark/hook/pythonpath_develop.dsv
+source;../../build/rotino_benchmark/share/rotino_benchmark/hook/pythonpath_develop.sh

@@ -1,0 +1,9 @@
+source;share/rotino_pid/hook/pythonpath.ps1
+source;share/rotino_pid/hook/pythonpath.dsv
+source;share/rotino_pid/hook/pythonpath.sh
+source;share/rotino_pid/hook/ament_prefix_path.ps1
+source;share/rotino_pid/hook/ament_prefix_path.dsv
+source;share/rotino_pid/hook/ament_prefix_path.sh
+source;../../build/rotino_pid/share/rotino_pid/hook/pythonpath_develop.ps1
+source;../../build/rotino_pid/share/rotino_pid/hook/pythonpath_develop.dsv
+source;../../build/rotino_pid/share/rotino_pid/hook/pythonpath_develop.sh

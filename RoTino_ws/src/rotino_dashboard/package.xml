@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>rotino_dashboard</name>
+  <version>0.1.0</version>
+  <description>Real-time PyQt5/pyqtgraph dashboard for the RoTino wheeled biped (states, forces, torques, estimation).</description>
+  <maintainer email="enzogpt55@libero.it">Alessando Prisco</maintainer>
+  <license>TODO: License declaration</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>ros_gz_interfaces</exec_depend>
+  <exec_depend>rotino_description</exec_depend>
+  <exec_depend>python3-pyqt5</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
