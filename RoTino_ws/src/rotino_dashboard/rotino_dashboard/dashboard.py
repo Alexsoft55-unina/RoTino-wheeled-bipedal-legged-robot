@@ -1,11 +1,4 @@
-"""RoTino real-time dashboard (PyQt5 + pyqtgraph).
-
-    ros2 run rotino_dashboard dashboard
-
-Reads the topics of wbr_controller (and the /rotino/debug + /rotino/jump_state subset of the PID
-controller) and redraws at a fixed frame rate: phase LEDs, diagnostic LEDs, a sagittal sketch of the
-robot with force arrows, live values and a grid of rolling plots.
-"""
+"""RoTino real-time dashboard (PyQt5 + pyqtgraph)."""
 
 import math
 import signal
@@ -21,17 +14,16 @@ from rotino_dashboard.ros_bridge import RosBridge
 
 G = 9.81
 DEG = 180.0 / math.pi
-MAX_POINTS = 800             # per curve after min/max decimation (peaks preserved)
-FRESH = 0.25                # s of wall time after which a stream is considered stopped
+MAX_POINTS = 800
+FRESH = 0.25
 LATENCY_LIMIT_MS = 100.0
-WHEEL_TORQUE_LIMIT = 10.0   # wbr_controller WHEEL_TORQUE_MAX
-LEG_TORQUE_LIMIT = 50.0     # wbr_controller LEG_TORQUE_MAX
-FORCE_SCALE = 0.003         # m per N in the robot sketch
-ZMP_TRAIL_S = 1.5           # s of ZMP history drawn as a fading trail in the top view
+WHEEL_TORQUE_LIMIT = 10.0
+LEG_TORQUE_LIMIT = 50.0
+FORCE_SCALE = 0.003
+ZMP_TRAIL_S = 1.5
 ZMP_TRAIL_POINTS = 90
-ZMP_MARGIN_WARN = 0.4       # fraction of d/2 left before the ZMP reaches a wheel
+ZMP_MARGIN_WARN = 0.4
 ZMP_MARGIN_ALARM = 0.2
-# live command limits: same as wbr_controller CMD_* (the controller clamps anyway)
 CMD_V_MAX = 2.0
 CMD_W_MAX = 1.5
 CMD_H_MIN, CMD_H_MAX = -0.05, 0.04
@@ -67,7 +59,6 @@ def deg(i):
     return lambda a: a[:, 1 + i] * DEG
 
 
-# (title, unit, minimum y span, [(stream, y(array), label, colour, dashed)])
 PLOTS = [
     ('Inclinazione θ', '°', 2.0, [
         ('debug', deg(1), 'θ misurato', C['blue'], False),
@@ -330,7 +321,6 @@ class RobotView(pg.PlotWidget):
         trac = sum(wheel_tau) / r if wheel_tau is not None else 0.0
         self.f_trac.setData(*self._arrows([((axle_x, 0.006), (axle_x + trac * FORCE_SCALE, 0.006))]))
 
-        # ground ticks scroll with the robot position
         xs = []
         start = math.floor((x0 - 0.4) / 0.1) * 0.1
         for k in range(10):
@@ -341,8 +331,7 @@ class RobotView(pg.PlotWidget):
         self.text.setText(phase_text)
 
 class ZmpView(pg.PlotWidget):
-    """Top view in the robot frame (forward up, left wheel on the left): wheel footprints, support
-    segment, projected CoM, multibody ZMP with a fading trail, LIPM ZMP and load bars per wheel."""
+    """Top view in the robot frame: wheel footprints, support segment, CoM, ZMP and load bars per wheel."""
 
     HALF_W = 0.27
     FWD = (-0.12, 0.13)
@@ -401,7 +390,7 @@ class ZmpView(pg.PlotWidget):
         d = np.asarray(points) - mid
         return np.stack([-(d @ lat), d @ fwd], -1)
 
-    def reset_view(self):  # not clear(): PlotWidget binds PlotItem.clear on the instance
+    def reset_view(self):
         for item in (self.support, self.lean, self.com, self.lipm, self.zmp, *self.loads):
             item.setData([], [])
         self.trail.setData([], [])
@@ -429,14 +418,13 @@ class ZmpView(pg.PlotWidget):
             w.setRect(QtCore.QRectF(x - self.wheel_width / 2, -self.r, self.wheel_width, 2 * self.r))
         self.support.setData([-h, h], [0.0, 0.0])
 
-        # load bars behind each wheel, full length = half the weight
         fz = fn_l + fn_r
         if self.weight is None and fz > 0:
             self.weight = fz
         scale = self.r / self.weight if self.weight else 0.0
         for bar, text, x, f in ((self.loads[0], self.load_text[0], -h - 0.055, fn_l),
                                 (self.loads[1], self.load_text[1], h + 0.055, fn_r)):
-            bar.setData([x, x], [-self.r, -self.r + max(f, 0.0) * scale * 2.0])   # full wheel height = weight
+            bar.setData([x, x], [-self.r, -self.r + max(f, 0.0) * scale * 2.0])
             text.setText(f'{f:4.1f} N')
             text.setPos(x, -self.r - 0.004)
 
@@ -451,7 +439,7 @@ class ZmpView(pg.PlotWidget):
         if trail is not None and len(trail) > 1:
             step = max(1, len(trail) // ZMP_TRAIL_POINTS)
             tr = trail[::step]
-            pts = np.stack([-tr[:, 13], tr[:, 14]], -1)        # each sample relative to its own support
+            pts = np.stack([-tr[:, 13], tr[:, 14]], -1)
             pts = np.stack([np.clip(pts[:, 0], -self.HALF_W, self.HALF_W), np.clip(pts[:, 1], *self.FWD)], -1)
             n = len(pts)
             brushes = [pg.mkBrush(255, 122, 182, int(20 + 180 * k / max(n - 1, 1))) for k in range(n)]
@@ -513,7 +501,6 @@ class Dashboard(QtWidgets.QMainWindow):
         self.timer.timeout.connect(self.refresh)
         self.set_fps(30)
 
-    # ------------------------------------------------------------------ layout
     def _left_panel(self):
         panel = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(panel)
@@ -639,7 +626,6 @@ class Dashboard(QtWidgets.QMainWindow):
             lay.addLayout(col, 1)
             return sl, value
 
-        # slider units: cm/s, crad/s (slider to the right = turn right), mm
         self.sl_v, self.lbl_v = slider('Velocità', -int(CMD_V_MAX * 100), int(CMD_V_MAX * 100))
         self.sl_w, self.lbl_w = slider('Rotazione', -int(CMD_W_MAX * 100), int(CMD_W_MAX * 100))
         self.sl_h, self.lbl_h = slider('Altezza', int(CMD_H_MIN * 1000), int(CMD_H_MAX * 1000))
@@ -726,7 +712,7 @@ class Dashboard(QtWidgets.QMainWindow):
                 p.setXLink(first)
             if title.startswith('Forze'):
                 self.weight_plot = p
-                p.getViewBox().setLimits(yMin=-150, yMax=400)   # near-singular legs give unbounded J^-T tau
+                p.getViewBox().setLimits(yMin=-150, yMax=400)
             for stream, fn, label, color, dashed in specs:
                 pen = pg.mkPen(color, width=1.6, style=QtCore.Qt.DashLine if dashed else QtCore.Qt.SolidLine)
                 name = f'<span style="color:{color}">{label}</span>'
@@ -735,7 +721,6 @@ class Dashboard(QtWidgets.QMainWindow):
         self.first_plot = first
         return self.glw
 
-    # ------------------------------------------------------------------ helpers
     def set_fps(self, fps):
         self.timer.start(int(1000 / fps))
 
@@ -752,7 +737,6 @@ class Dashboard(QtWidgets.QMainWindow):
             return f'{a:+.{prec}f} {unit}'
         return f'{a:+.{prec}f} / {b:+.{prec}f} {unit}'
 
-    # ------------------------------------------------------------------ frame
     def refresh(self):
         t0 = time.perf_counter()
         b = self.bridge
@@ -770,7 +754,6 @@ class Dashboard(QtWidgets.QMainWindow):
 
         last = {k: (buf.last() if fresh[k] else None) for k, buf in b.buffers.items()}
 
-        # ---- phase LEDs
         phase = b.phase if fresh['debug'] or fresh['wbr'] else None
         if phase is None and fresh['joints'] and not fresh['debug']:
             phase = 'HOLD'
@@ -785,7 +768,6 @@ class Dashboard(QtWidgets.QMainWindow):
             for t, name in reversed(b.phase_log):
                 self.log.addItem(f'{t:6.2f}s {name}')
 
-        # ---- diagnostics
         dbg, wbr, cnt, wc, lc, est, od, lf, zm = (last[k] for k in ('debug', 'wbr', 'contact', 'wheel_cmd',
                                                                     'leg_cmd', 'est', 'odom', 'leg_force', 'zmp'))
         touching = (cnt is not None and cnt[1] > 0.5, cnt is not None and cnt[2] > 0.5)
@@ -823,7 +805,6 @@ class Dashboard(QtWidgets.QMainWindow):
         d['latency'].set('ok' if delay_ms < LATENCY_LIMIT_MS else 'alarm', lit=fresh['joints'],
                          text=f'Ritardo {delay_ms:5.1f} ms' if fresh['joints'] else 'Ritardo < 100 ms')
 
-        # ---- values
         v = self.values
         v['t'].setText(f'{now:10.3f} s')
         v['theta'].setText(self._fmt(dbg[2] * DEG if dbg is not None else None,
@@ -840,7 +821,6 @@ class Dashboard(QtWidgets.QMainWindow):
         v['rate'].setText(f'{self.rates.get("debug", 0):5.0f} Hz')
         v['delay'].setText(f'{delay_ms:5.1f} ms' if not math.isnan(delay_ms) else '—')
 
-        # ---- robot sketch
         if self.robot.model is None and b.robot_description:
             try:
                 self.robot.set_model(b.robot_description)
@@ -848,7 +828,7 @@ class Dashboard(QtWidgets.QMainWindow):
                                                    pen=pg.mkPen('#6b7280', width=1, style=QtCore.Qt.DotLine),
                                                    label='peso m_b·g', labelOpts={'color': MUTED, 'position': 0.92})
                 self.weight_plot.addItem(self.weight_line)
-            except Exception as exc:  # malformed description: keep the rest of the dashboard running
+            except Exception as exc:
                 self.robot.text.setText(f'robot_description non valido: {exc}')
                 b.robot_description = None
         if not self.paused:
@@ -860,7 +840,6 @@ class Dashboard(QtWidgets.QMainWindow):
                 if zm is not None and od is not None else None)
             self.zmp_view.update_zmp(zm, b.buffers['zmp'].window(now - ZMP_TRAIL_S) if zm is not None else None)
 
-            # ---- plots
             t_from = now - self.window_s
             windows = {}
             for stream, fn, curve in self.curves:
@@ -900,7 +879,7 @@ def main():
     signal.signal(signal.SIGINT, lambda *_: app.quit())
     signal.signal(signal.SIGTERM, lambda *_: app.quit())
     keepalive = QtCore.QTimer()
-    keepalive.timeout.connect(lambda: None)   # lets Python handle Ctrl+C while Qt runs
+    keepalive.timeout.connect(lambda: None)
     keepalive.start(200)
     code = app.exec_()
     bridge.close()

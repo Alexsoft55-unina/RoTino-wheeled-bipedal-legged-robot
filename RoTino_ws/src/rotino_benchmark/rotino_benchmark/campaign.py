@@ -1,20 +1,4 @@
-"""Runs one scenario with the PID and the MPC, headless, and collects a CSV per law, then compares them.
-
-Every run uses the same world, the same URDF and the same scenario arguments; only the controller
-package changes. Runs are sequential and each one starts from a clean process table, because a
-leftover node from a previous run keeps publishing on /rotino/* and silently corrupts the next
-result (a stale dashboard publishing /rotino/cmd_vel put a controller into teleop once).
-
-    ros2 run rotino_benchmark campaign -- spinta                        # a scenario of scenarios.py
-    ros2 run rotino_benchmark campaign -- --scenario push_enable:=true push_impulse:=4.0 --duration 20
-    ros2 run rotino_benchmark campaign -- --gradino 5.0 --gradino-t 4.0     # step force of 5 N at 4 s
-    ros2 run rotino_benchmark campaign -- trapezio --topic-extra        # also the estimator error of the MPC
-    ros2 run rotino_benchmark suite                                     # every scenario (suite.py)
-
---topic-extra makes the logger subscribe to one more topic, /rotino/estimation_error. The MPC then has one
-more reader to serve and the logger one more message per control step, on threads that are already nearly
-full: when in doubt, collect it in a separate run and keep the default run for the metrics.
-"""
+"""Runs one scenario with the PID and the MPC, headless, collects a CSV per law and compares them."""
 
 import argparse
 import json
@@ -28,12 +12,9 @@ from datetime import datetime
 from rotino_benchmark.common import LAWS, default_out
 from rotino_benchmark.scenarios import SCENARIOS
 
-# On Fortress the server runs as "ruby /usr/bin/ign gazebo ...": 'gz sim' alone missed a Gazebo left over
-# from a manual launch, and the next controller attached to that old world (robot already fallen).
 STALE_PATTERNS = ('rotino_pid/controller', 'rotino_mpc/controller',
                   'rotino_benchmark/logger', 'rotino_benchmark/disturbance', 'rotino_dashboard', 'gz sim', 'ign gazebo', 'parameter_bridge',
                   'robot_state_publisher', 'ros_gz_sim')
-# lines of the simulation log that make a run invalid
 INVALID_MARKS = ('Failed to configure controller', 'Live commands received')
 
 
@@ -67,15 +48,12 @@ def run_one(law, scenario, duration, out_dir, log_dir, disturbance=None, extra_t
     with open(os.path.join(log_dir, f'{law}.log'), 'w') as sim_log:
         sim = subprocess.Popen(launch, stdout=sim_log, stderr=subprocess.STDOUT,
                                preexec_fn=os.setsid)
-        time.sleep(2.0)                       # let Gazebo come up
-        # Start the logger well before the release: its /joint_states subscription connects ~1.6 s after
-        # /rotino/odom, and when the release came first the ZMP analysis (which needs the joints) lost up
-        # to the first 4 s of the run. Rows are written only from /rotino/debug, i.e. after the release.
+        time.sleep(2.0)
         log = subprocess.Popen(logger, stdout=sim_log, stderr=subprocess.STDOUT,
                                preexec_fn=os.setsid)
         procs = [log, sim]
         cmd = disturbance_cmd(disturbance)
-        if cmd:                               # waits for /rotino/debug, i.e. for the release
+        if cmd:
             procs.insert(0, subprocess.Popen(cmd, stdout=sim_log, stderr=subprocess.STDOUT,
                                              preexec_fn=os.setsid))
         try:
@@ -107,8 +85,7 @@ def run_one(law, scenario, duration, out_dir, log_dir, disturbance=None, extra_t
 
 
 def run_scenario(run_dir, laws, args, duration, name=None, disturbance=None, extra_topics=False):
-    """Runs the laws one after the other in run_dir (CSVs) and run_dir/logs (simulation output);
-    scenario.json records what was run, so that compare knows the scenario whatever the directory name."""
+    """Runs the laws one after the other in run_dir (CSVs, logs/) and records the scenario in scenario.json."""
     log_dir = os.path.join(run_dir, 'logs')
     os.makedirs(log_dir, exist_ok=True)
     with open(os.path.join(run_dir, 'scenario.json'), 'w') as f:

@@ -1,11 +1,4 @@
-"""Zero Moment Point study of one campaign: metrics table, plots and a per-law ZMP CSV.
-
-The ZMP is rebuilt from the logged ground-truth base pose and joint angles with the multibody
-formula of rotino_description.zmp (Fortress contacts carry no forces, so no CoP can be measured).
-Needs CSVs written by the logger with the base_* columns; older logs are skipped.
-
-    ros2 run rotino_benchmark zmp -- <scenario_dir>
-"""
+"""Zero Moment Point study of one campaign: metrics table, plots and a per-law ZMP CSV."""
 
 import argparse
 import csv
@@ -25,7 +18,7 @@ JOINT_COLS = {'left_hip': 'hip_L_pos', 'right_hip': 'hip_R_pos', 'left_knee': 'k
               'right_knee': 'knee_R_pos', 'left_wheel_joint': 'wheel_L_pos', 'right_wheel_joint': 'wheel_R_pos'}
 CONTACT_COLS = ('contact_L_x', 'contact_L_y', 'contact_R_x', 'contact_R_y')
 STAMP_COLS = ('odom_stamp_s', 'joints_stamp_s')
-MIN_LOAD = 0.2      # below this fraction of m g the ZMP is undefined (wheels almost unloaded)
+MIN_LOAD = 0.2
 
 _MODEL = None
 
@@ -56,10 +49,8 @@ def read_log(path):
     d = {c: np.array(v) for c, v in rows.items()}
     ok = np.isfinite(d['time_s']) & np.isfinite(d['base_x_m']) & np.isfinite(d['base_qw'])
     ok &= np.isfinite(np.stack([d[c] for c in JOINT_COLS.values()])).all(0)
-    ok &= np.array([p != 'HOLD' for p in phase])            # anchored: the ZMP means nothing yet
+    ok &= np.array([p != 'HOLD' for p in phase])
     d = {c: v[ok] for c, v in d.items()}
-    # jump_state is published on change only and the logger may miss it: while anchored the base
-    # does not move at all, so start at the first sample where the base pose changes
     pose = np.stack([d[c] for c in BASE_COLS + QUAT_COLS], -1)
     moved = np.flatnonzero(np.abs(np.diff(pose, axis=0)).max(-1) > 1e-7)
     if moved.size:
@@ -70,19 +61,17 @@ def read_log(path):
 def analyse(d, model=None, window=0.04):
     model = model or load_model()
     stamped = np.isfinite(d['odom_stamp_s']).any() and np.isfinite(d['joints_stamp_s']).any()
-    t_base = d['odom_stamp_s'] if stamped else d['time_s']      # older logs: row time for everything
+    t_base = d['odom_stamp_s'] if stamped else d['time_s']
     out = zmp.zmp_series(model, t_base, np.stack([d[c] for c in BASE_COLS], -1),
                          np.stack([d[c] for c in QUAT_COLS], -1),
                          {name: d[c] for name, c in JOINT_COLS.items()}, window=window,
                          joint_t=d['joints_stamp_s'] if stamped else None)
     out['stamped'] = stamped
-    # measured contact points (Gazebo) on the same grid, to cross-check the kinematic ones
     fin = np.isfinite(t_base)
     for side in ('L', 'R'):
         xy = [np.interp(out['t'], t_base[fin], d[f'contact_{side}_{a}'][fin], left=np.nan, right=np.nan)
               for a in ('x', 'y')]
         out[f'meas_contact_{side}'] = np.stack(xy, -1)
-    # nearly unloaded wheels: the ZMP (a ratio over Fz) is undefined there
     out['valid'] = out['fz'] > MIN_LOAD * model.m.sum() * zmp.G
     for key in ('zmp', 'lipm', 'y_rel', 'e_long', 'margin', 'fn_left', 'fn_right', 'friction_use', 'lam'):
         v = np.array(out[key], dtype=float)
@@ -174,7 +163,6 @@ def write_zmp_csv(out, path):
         w.writerows(np.column_stack([v for _, v in cols]).round(6).tolist())
 
 
-# ---------------------------------------------------------------------------- plots
 def generate_zmp_plots(run_dir, out_dir=None, results=None):
     import matplotlib
     matplotlib.use('Agg')
@@ -190,7 +178,6 @@ def generate_zmp_plots(run_dir, out_dir=None, results=None):
     def t0(o):
         return o['t'] - o['t'][0]
 
-    # 1. lateral ZMP and wheel loads: one row per law, own y scale (a chattering law would flatten the others)
     n = len(results)
     half_mm = 1e3 * 0.5 * float(np.median(next(iter(results.values()))['track']))
     fig, axes = plt.subplots(n, 2, figsize=(13, 2.8 * n + 0.6), sharex=True, squeeze=False)
@@ -202,7 +189,7 @@ def generate_zmp_plots(run_dir, out_dir=None, results=None):
         ax1.plot(t0(o), lat, color=COLORS[law], lw=1.1)
         span = max(np.nanmax(np.abs(lat)) if np.isfinite(lat).any() else 0.0, 2.0) * 1.3
         if span < half_mm:
-            ax1.set_ylim(-span, span)                       # zoom: the support edges are off-scale
+            ax1.set_ylim(-span, span)
             ax1.text(0.99, 0.95, f'bordi ±{half_mm:.0f} mm fuori scala', transform=ax1.transAxes,
                      ha='right', va='top', fontsize=8, color='0.4')
         ax1.set_ylabel(f'{law.upper()}\nZMP laterale [mm]')
@@ -222,7 +209,6 @@ def generate_zmp_plots(run_dir, out_dir=None, results=None):
     fig.savefig(saved[-1], dpi=150)
     plt.close(fig)
 
-    # 2. longitudinal: residual of the multibody ZMP vs the LIPM point, and friction use
     fig, axes = plt.subplots(n, 2, figsize=(13, 2.8 * n + 0.6), sharex=True, squeeze=False)
     for (ax1, ax2), (law, o) in zip(axes, results.items()):
         ax1.plot(t0(o), 1e3 * o['e_long_lipm'], color='0.55', lw=0.9, label='LIPM')
@@ -243,7 +229,6 @@ def generate_zmp_plots(run_dir, out_dir=None, results=None):
     fig.savefig(saved[-1], dpi=150)
     plt.close(fig)
 
-    # 3. top view, world frame
     fig, axes = plt.subplots(1, n, figsize=(5.5 * n, 5.5), squeeze=False)
     for ax, (law, o) in zip(axes[0], results.items()):
         step = max(1, int(round(0.5 / float(np.median(np.diff(o['t']))))))
@@ -264,7 +249,6 @@ def generate_zmp_plots(run_dir, out_dir=None, results=None):
     fig.savefig(saved[-1], dpi=150)
     plt.close(fig)
 
-    # 4. footprint in the robot frame: where the ZMP lives relative to the wheels
     fig, ax = plt.subplots(figsize=(7, 5))
     ax.plot([-half_mm, half_mm], [0, 0], color='k', lw=3, label='segmento di appoggio')
     for law, o in results.items():
@@ -272,7 +256,7 @@ def generate_zmp_plots(run_dir, out_dir=None, results=None):
                 color=COLORS[law], label=f'{law.upper()} multicorpo')
         ax.plot(1e3 * o['y_rel_lipm'] * 0.5 * o['track'], 1e3 * o['e_long_lipm'], '.', ms=1.0, alpha=0.15,
                 color=COLORS[law], mec='none')
-    ax.invert_xaxis()                                        # robot seen from above: left wheel on the left
+    ax.invert_xaxis()
     ax.set_xlabel('laterale [mm] (sinistra ←)')
     ax.set_ylabel('longitudinale [mm] (avanti ↑)')
     ax.set_title('Impronta dello ZMP nel frame del robot (punti tenui: LIPM)')
@@ -285,7 +269,6 @@ def generate_zmp_plots(run_dir, out_dir=None, results=None):
     return saved
 
 
-# ---------------------------------------------------------------------------- CLI
 def print_table(run_dir, metrics):
     laws = list(metrics)
     width = max(len(lbl) for _, lbl, _ in ROWS) + 2

@@ -4,11 +4,7 @@ import numpy as np
 
 
 class CubicSTrajectory:
-    """Planar S-curve y(x) = Y (3 (x/X)^2 - 2 (x/X)^3) with a quintic arc-length time law.
-
-    The path starts and ends parallel to the local x axis; X is solved so the arc length equals `length`.
-    Coordinates are in the robot frame at release (x forward, y left).
-    """
+    """Planar S-curve y(x) = Y (3 (x/X)^2 - 2 (x/X)^3) with a quintic arc-length time law."""
 
     def __init__(self, length, lateral, duration, samples=4000):
         self.length = length

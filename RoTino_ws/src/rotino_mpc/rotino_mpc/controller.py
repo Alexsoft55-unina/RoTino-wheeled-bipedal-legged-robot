@@ -1,15 +1,4 @@
-"""
-RoTino decoupled WBR controller (Cui et al., "Modeling and Control of a Wheeled Biped Robot",
-Micromachines 2022, 13, 747), replacing the PID balance/jump controller of the PID workspace.
-
-  state estimator (Sec. 4.3)   IMU + wheel odometry + leg kinematics -> linear Kalman filter, 500 Hz
-  VL-WIP TV-LQR (Sec. 4.1)     X = [s, theta, phi, s_dot, theta_dot, phi_dot] -> wheel torques, 500 Hz
-  upper-body MPC (Sec. 4.2)    [s, s_dot, z, z_dot] -> CoM offset delta_s and vertical force F_z, 100 Hz
-  task-space VMC (eq. 19)      delta_s, z_ref, F_z -> hip/knee torques, 500 Hz
-
-Only proprioceptive/IMU data drive the controller; /rotino/odom (ground truth) is used only to publish
-the estimation error.
-"""
+"""RoTino decoupled WBR controller (Cui et al., Micromachines 2022, 13, 747): Kalman filter, TV-LQR, MPC, VMC."""
 
 import math
 import time
@@ -33,54 +22,43 @@ WHEEL_JOINTS = ['left_wheel_joint', 'right_wheel_joint']
 
 HOLD_TIME = 1.5
 RELEASE_REPEAT_TIME = 0.05
-MOTION_START_TIME = 2.0      # reference motions start this long after release
-# wait_start: the motions start this long after /rotino/cmd_start instead, so that the preview of the PID
-# (about 1.1 s ahead) and the horizon of the MPC (0.5 s) see them coming exactly as after a release
+MOTION_START_TIME = 2.0
 START_LEAD = 1.0
-PHYSICS_DT = 0.0005          # rotino_world.sdf max_step_size (push impulse)
+PHYSICS_DT = 0.0005
 PUSH_TICKS = 25
 
-# ---------------- TV-LQR (eq. 15) ----------------
-LQR_Q = np.diag([30.0, 400.0, 80.0, 15.0, 6.0, 2.0])   # s, theta, phi, s_dot, theta_dot, phi_dot
-# R weighs common-mode (balance) and differential (yaw) wheel torque separately. The differential weight keeps
-# the yaw loop (crossover ~16 rad/s) well below the torsional resonance of the stance legs (~76 rad/s, 12 Hz:
-# torso yaw inertia on the VMC springs), which a high yaw gain excites into a permanent limit cycle.
-LQR_R_COMMON = 2.0           # equivalent to R = I for the sagittal gains
+LQR_Q = np.diag([30.0, 400.0, 80.0, 15.0, 6.0, 2.0])
+LQR_R_COMMON = 2.0
 LQR_R_DIFF = 100.0
-_T_CD = np.array([[0.5, 0.5], [-0.5, 0.5]])   # [common, diff] = T @ [tau_l, tau_r]
+_T_CD = np.array([[0.5, 0.5], [-0.5, 0.5]])
 LQR_R = _T_CD.T @ np.diag([LQR_R_COMMON, LQR_R_DIFF]) @ _T_CD
 WHEEL_TORQUE_MAX = 10.0
-DIFF_TORQUE_MAX = 2.5        # Nm per wheel for yaw: balance (common mode) keeps priority
-# wheel scrub while turning: Coulomb + viscous feedforward from the commanded yaw rate (identified in Gazebo)
-# and a slow integral on the heading error; both act far below the leg torsional resonance
-YAW_FRICTION = 0.25          # Nm per wheel
-YAW_VISCOUS = 0.10           # Nm per wheel per rad/s
-YAW_FRICTION_SMOOTH = 0.01   # rad/s (acts on the reference only: no chattering)
-YAW_KI = 0.6                 # Nm per wheel per rad s
-YAW_I_MAX = 0.6              # Nm per wheel
-YAW_I_DEADBAND = 0.035       # rad: no integration on small static errors (avoids stick-slip hunting)
-YAW_ERROR_MAX = 0.35         # rad; larger yaw errors are clamped (turn-rate commands the wheels cannot follow)
-THETA_DOT_FILTER = 0.8        # first-order filters, weight of the previous value at 500 Hz
+DIFF_TORQUE_MAX = 2.5
+YAW_FRICTION = 0.25
+YAW_VISCOUS = 0.10
+YAW_FRICTION_SMOOTH = 0.01
+YAW_KI = 0.6
+YAW_I_MAX = 0.6
+YAW_I_DEADBAND = 0.035
+YAW_ERROR_MAX = 0.35
+THETA_DOT_FILTER = 0.8
 S_DOT_FILTER = 0.8
 DELTA_S_FILTER = 0.9
 
-# ---------------- MPC (eqs. 17-18) ----------------
-MPC_EVERY = 5                # 500 Hz / 5 = 100 Hz, as in Fig. 4
+MPC_EVERY = 5
 MPC_HORIZON = 25
 MPC_DT = 0.02
-MPC_S_H = (50.0, 20.0)       # s, s_dot
+MPC_S_H = (50.0, 20.0)
 MPC_W_H = 200.0
-MPC_S_V = (5000.0, 150.0)    # z, z_dot
+MPC_S_V = (5000.0, 150.0)
 MPC_W_V = 2e-3
 DS_MAX_CAP = 0.03
 F_MIN_RATIO = 0.3
 F_MAX_RATIO = 3.0
 F_MAX_THRUST_RATIO = 6.0
 
-# ---------------- VMC (eq. 19), per leg, base frame (x, z) ----------------
 VMC_KP_HOLD = np.diag([1500.0, 2000.0])
 VMC_KD_HOLD = np.diag([40.0, 50.0])
-# stance: horizontal spring realizes delta_s; vertically only damping, the support force is F_z from the MPC
 VMC_KP = np.diag([1500.0, 0.0])
 VMC_KD = np.diag([40.0, 15.0])
 VMC_KP_FLIGHT = np.diag([800.0, 800.0])
@@ -88,20 +66,18 @@ VMC_KD_FLIGHT = np.diag([20.0, 20.0])
 LEG_TORQUE_MAX = 50.0
 FLIGHT_WHEEL_DAMPING = 0.05
 
-# ---------------- Kalman filter (eqs. 20-21) ----------------
 KF_Q_ACC = 0.5
 KF_R_POS = 1e-4
 KF_R_VEL = 1e-3
 
-# ---------------- contact / jump ----------------
 F_CONTACT_OFF = 1.5
 F_CONTACT_ON = 6.0
 CONTACT_LOSS_DEBOUNCE = 0.004
 CONTACT_GAIN_DEBOUNCE = 0.010
 CONTACT_STALE_TIME = 0.006
 
-HIP_AXLE_LOW = 0.12          # squat hip-axle distance [m]
-HIP_AXLE_HIGH = 0.24         # thrust target [m]
+HIP_AXLE_LOW = 0.12
+HIP_AXLE_HIGH = 0.24
 HIP_AXLE_FLIGHT = 0.17
 T_SQUAT = 0.8
 T_THRUST_MAX = 0.30
@@ -124,20 +100,19 @@ PARAMS = {
     'drive_enable': False, 'drive_distance': 1.0, 'drive_period': 8.0,
     'planar_enable': False, 'traj_length': 3.0, 'traj_lateral': 0.6, 'traj_duration': 12.0,
     'push_enable': False, 'push_time': 4.0, 'push_impulse': 2.7,
-    'wait_start': False,    # hold the scripted motions until /rotino/cmd_start
+    'wait_start': False,
 }
 
 K_LAT = 2.0
 LAT_FULL_SPEED = 0.10
 
-# ---------------- live commands (/rotino/cmd_*) ----------------
-CMD_TIMEOUT = 0.5            # s without /rotino/cmd_vel -> velocity and turn rate go back to zero
-CMD_V_MAX = 0.6              # m/s
-CMD_W_MAX = 1.5              # rad/s
-CMD_YAW_ACC = 3.0            # rad/s^2 (forward acceleration uses accel_max)
-CMD_HEIGHT_MIN, CMD_HEIGHT_MAX = -0.05, 0.04   # m, offset of the CoM height from the nominal pose
-CMD_HEIGHT_RATE = 0.08       # m/s
-CMD_PUSH_MAX = 6.0           # N s
+CMD_TIMEOUT = 0.5
+CMD_V_MAX = 0.6
+CMD_W_MAX = 1.5
+CMD_YAW_ACC = 3.0
+CMD_HEIGHT_MIN, CMD_HEIGHT_MAX = -0.05, 0.04
+CMD_HEIGHT_RATE = 0.08
+CMD_PUSH_MAX = 6.0
 
 
 def smoothstep(t, T):
@@ -169,7 +144,6 @@ class WBRController(Node):
         p = self.model.p
         self.weight = p.m_b * G
 
-        # height <-> hip angle (hip = -knee/2), used for the pendulum-length grid and the jump heights
         samples = []
         self.height_table = []
         for hip in np.linspace(-0.45, 0.45, 25):
@@ -196,12 +170,8 @@ class WBRController(Node):
         self.release_pub = self.create_publisher(Empty, '/rotino/release', 10)
         self.state_pub = self.create_publisher(String, '/rotino/jump_state', 10)
         self.wrench_pub = self.create_publisher(EntityWrench, '/world/rotino_world/wrench', 10)
-        # [t, theta, theta_dot, s, s_dot, wheel_u, com_z, com_z_vel, Fn_total, min_wheel_gap, loaded]
         self.debug_pub = self.create_publisher(Float64MultiArray, '/rotino/debug', 10)
-        # [t, s, s_ref, theta, theta_ref, phi, phi_ref, s_dot, s_dot_ref, z, z_ref, delta_s, F_z, tau_l, tau_r, l,
-        #  tau_hip_l, tau_knee_l]
         self.wbr_pub = self.create_publisher(Float64MultiArray, '/rotino/wbr_state', 10)
-        # [ex, ey, ez, evx, evy, evz]: estimated - ground-truth torso position/velocity (world)
         self.est_err_pub = self.create_publisher(Float64MultiArray, '/rotino/estimation_error', 10)
         self.planar_pub = self.create_publisher(Float64MultiArray, '/rotino/planar', 10)
         self.tracking_error_pub = self.create_publisher(Float64MultiArray, '/rotino/tracking_error', 10)
@@ -209,7 +179,6 @@ class WBRController(Node):
         self.imu = None
         self.odom = None
         self.contact = {'left': (-math.inf, 0.0), 'right': (-math.inf, 0.0)}
-        # depth 1: only the newest sample matters; late control ticks use the real dt
         self.create_subscription(Imu, '/rotino/imu', lambda m: setattr(self, 'imu', m), 1)
         self.create_subscription(Odometry, '/rotino/odom', lambda m: setattr(self, 'odom', m), 1)
         self.create_subscription(Contacts, '/rotino/left_wheel_contact', lambda m: self._contact_cb(m, 'left'), 1)
@@ -219,7 +188,6 @@ class WBRController(Node):
         self.create_subscription(Float64, '/rotino/cmd_height', self._cmd_height_cb, 10)
         self.create_subscription(Empty, '/rotino/cmd_jump', self._cmd_jump_cb, 10)
         self.create_subscription(Float64, '/rotino/cmd_push', self._cmd_push_cb, 10)
-        # wait_start: the scripted motions stay on hold until a message on /rotino/cmd_start
         self.create_subscription(Empty, '/rotino/cmd_start', self._cmd_start_cb, 10)
         self.motion_start = math.inf if self.cfg['wait_start'] else MOTION_START_TIME
         self.start_request = False
@@ -244,7 +212,6 @@ class WBRController(Node):
         self.heading_hold = 0.0
         self.t_now = 0.0
 
-        # live commands: once one arrives the scripted motion profiles are replaced by the teleop reference
         self.teleop = False
         self.teleop_ready = False
         self.cmd_v = self.cmd_w = self.cmd_height = 0.0
@@ -274,7 +241,6 @@ class WBRController(Node):
         self.odom0 = None
         self.get_logger().info('Waiting for /joint_states and /rotino/imu ...')
 
-    # -----------------------------------------------------------------
     def _z_for_hip_axle(self, zb):
         zbs, zcs = zip(*self.height_table)
         return float(np.interp(zb, zbs, zcs))
@@ -293,9 +259,6 @@ class WBRController(Node):
         if touching:
             self.contact[side] = (stamp_to_sec(msg.header.stamp), force)
 
-    # -----------------------------------------------------------------
-    # Live commands
-    # -----------------------------------------------------------------
     def _start_teleop(self):
         if not self.teleop:
             self.teleop = True
@@ -305,8 +268,7 @@ class WBRController(Node):
         self.start_request = True
 
     def _update_start(self, t):
-        """wait_start: the scripted motions begin START_LEAD after the start command (never before the
-        usual MOTION_START_TIME, if the command came during the release)."""
+        """wait_start: the scripted motions begin START_LEAD after the start command."""
         if self.start_request and math.isinf(self.motion_start):
             self.motion_start = max(t + START_LEAD, MOTION_START_TIME)
             self.get_logger().info(f'Start command: the motion begins at t={self.motion_start:.2f} s')
@@ -335,7 +297,6 @@ class WBRController(Node):
         if not self.teleop or self.phase == PHASE_HOLD:
             return
         if not self.teleop_ready:
-            # start from the current state so that taking over is bumpless
             self.tele_s = self.s
             self.tele_yaw = wrap(yaw - self.yaw0)
             self.tele_z = self.z_ref_last
@@ -350,7 +311,6 @@ class WBRController(Node):
         if balance:
             self.tele_s += self.tele_v * dt
             self.tele_yaw += self.tele_w * dt
-            # anti-windup: the heading reference never runs further than YAW_ERROR_MAX ahead of the robot
             lag = wrap(self.tele_yaw - (yaw - self.yaw0))
             if abs(lag) > YAW_ERROR_MAX:
                 self.tele_yaw -= lag - math.copysign(YAW_ERROR_MAX, lag)
@@ -367,9 +327,6 @@ class WBRController(Node):
         self.state_pub.publish(String(data=phase))
         self.get_logger().info(f'>>> PHASE {phase} t={t:.3f}s')
 
-    # -----------------------------------------------------------------
-    # Operator / trajectory references (Fig. 4, blue blocks)
-    # -----------------------------------------------------------------
     def _motion_reference(self, t):
         """Returns (s_ref, s_dot_ref, yaw_offset, yaw_rate_ref) of the stance trajectory at time t after release."""
         c = self.cfg
@@ -377,7 +334,7 @@ class WBRController(Node):
         if self.phase != PHASE_BALANCE:
             return 0.0, 0.0, self.heading_hold, 0.0
         if self.teleop and self.teleop_ready:
-            ahead = max(t - self.t_now, 0.0)   # MPC horizon: constant commanded rates
+            ahead = max(t - self.t_now, 0.0)
             return (self.tele_s + self.tele_v * ahead - self.s_offset, self.tele_v,
                     self.tele_yaw + self.tele_w * ahead, self.tele_w)
         if self.jump_done or tm <= 0.0:
@@ -411,7 +368,6 @@ class WBRController(Node):
             z0 = self.z_stand
             return z0 + (self.z_low - z0) * a, (self.z_low - z0) * da, 0.0
         if self.phase == PHASE_THRUST:
-            # constant acceleration so that the CoM leaves full extension at jump_velocity
             v = self.cfg['jump_velocity']
             acc = v * v / (2.0 * (self.z_high - self.z_low))
             T = v / acc
@@ -434,7 +390,6 @@ class WBRController(Node):
             return self.z_nom + A * math.sin(w * th), A * w * math.cos(w * th), -A * w * w * math.sin(w * th)
         return self.z_nom, 0.0, 0.0
 
-    # -----------------------------------------------------------------
     def _joint_state_cb(self, msg):
         if self.imu is None:
             return
@@ -459,7 +414,6 @@ class WBRController(Node):
         self.cpu_ms = 0.99 * self.cpu_ms + 0.01 * (time.perf_counter() - t_cpu) * 1e3
         self.max_dt = max(self.max_dt, dt)
 
-    # -----------------------------------------------------------------
     def _legs(self, q, qd):
         pl, Jl = self.model.leg_fk(q['left_hip'], q['left_knee'])
         pr, Jr = self.model.leg_fk(q['right_hip'], q['right_knee'])
@@ -473,7 +427,7 @@ class WBRController(Node):
         taus = []
         for (p_f, J, v_f), qd in zip(legs, self.leg_qd):
             F = Kp @ (p_d - p_f) + Kd @ (v_d - v_f) + F_ff
-            tau_ff = self.model.p.leg_damping * qd   # feedforward: cancels the URDF joint damping
+            tau_ff = self.model.p.leg_damping * qd
             taus.append(np.clip(J.T @ F + tau_ff, -LEG_TORQUE_MAX, LEG_TORQUE_MAX))
         tau = [taus[0][0], taus[1][0], taus[0][1], taus[1][1]]
         self.leg_pub.publish(Float64MultiArray(data=[float(x) for x in tau]))
@@ -513,14 +467,12 @@ class WBRController(Node):
         o = self.imu.orientation
         return o.x, o.y, o.z, o.w
 
-    # -----------------------------------------------------------------
     def _control_step(self, t, dt, q, qd):
         p = self.model.p
         self.t_now = t
         if t < RELEASE_REPEAT_TIME:
             self.release_pub.publish(Empty())
 
-        # ---------------- IMU ----------------
         R = quat_to_matrix(*self._quat())
         gyro_b = np.array([self.imu.angular_velocity.x, self.imu.angular_velocity.y, self.imu.angular_velocity.z])
         omega_w = R @ gyro_b
@@ -532,7 +484,6 @@ class WBRController(Node):
         heading /= max(np.linalg.norm(heading), 1e-9)
         yaw = math.atan2(heading[1], heading[0])
 
-        # ---------------- leg kinematics, equivalent centroid (eqs. 2-3) ----------------
         legs = self._legs(q, qd)
         axle_b = np.array([0.5 * (legs[0][0][0] + legs[1][0][0]), 0.0, 0.5 * (legs[0][0][1] + legs[1][0][1])])
         v_rel_b = np.array([0.5 * (legs[0][2][0] + legs[1][2][0]), 0.0, 0.5 * (legs[0][2][1] + legs[1][2][1])])
@@ -547,7 +498,6 @@ class WBRController(Node):
         self.theta_dot = THETA_DOT_FILTER * self.theta_dot + (1 - THETA_DOT_FILTER) * (theta - self.prev_theta) / dt
         self.prev_theta = theta
 
-        # ---------------- contact state ----------------
         fn = sum(f if t_now_ok else 0.0 for f, t_now_ok in
                  ((self.contact[s][1], self.last_stamp - self.contact[s][0] <= CONTACT_STALE_TIME)
                   for s in ('left', 'right')))
@@ -561,7 +511,6 @@ class WBRController(Node):
                 self.loaded, self.unloaded_timer = True, 0.0
         stance = self.phase in STANCE_PHASES and self.loaded
 
-        # ---------------- Kalman filter (eqs. 20-21) ----------------
         axle_w_rel = R @ axle_b
         wP_b = -axle_w_rel
         wV_b = -np.cross(omega_w, axle_w_rel) - R @ v_rel_b
@@ -592,7 +541,6 @@ class WBRController(Node):
         com_height = float(P_b[2] + (R @ c_b)[2])
         wheel_gap = float(P_b[2] + axle_w_rel[2]) - p.r
 
-        # ---------------- phase machine (jump: Fig. 11 stages) ----------------
         tp = t - self.phase_t0
         if self.phase == PHASE_BALANCE:
             scripted = self.cfg['jump_enable'] and not self.jump_done and t > self.cfg['jump_start_time']
@@ -627,7 +575,6 @@ class WBRController(Node):
             self.jump_done = True
             self._set_phase(PHASE_BALANCE, t)
 
-        # ---------------- references ----------------
         self._update_start(t)
         self._update_teleop(t, dt, yaw)
         z_ref, zd_ref, zdd_ref = self._height_reference(t)
@@ -641,13 +588,11 @@ class WBRController(Node):
         tau_l = tau_r = 0.0
         tau_legs = [0.0] * 4
         if self.phase == PHASE_FLIGHT:
-            # wheels held still, legs retracted under the CoM (flight task-space controller)
             p_d = np.array([c_b[0], c_b[2] - self.z_flight])
             tau_legs = self._vmc(legs, p_d, np.zeros(2), VMC_KP_FLIGHT, VMC_KD_FLIGHT)
             tau_l = -FLIGHT_WHEEL_DAMPING * qd['left_wheel_joint']
             tau_r = -FLIGHT_WHEEL_DAMPING * qd['right_wheel_joint']
         else:
-            # ---------------- upper-body MPC, 100 Hz ----------------
             if not self.cfg['mpc_enable']:
                 self.delta_s, self.F_z = 0.0, self.weight
             elif self.tick % MPC_EVERY == 0:
@@ -656,12 +601,10 @@ class WBRController(Node):
             self.delta_s_f = DELTA_S_FILTER * self.delta_s_f + (1 - DELTA_S_FILTER) * self.delta_s
             ds = self.delta_s_f
 
-            # ---------------- TV-LQR ----------------
             theta_ref = math.atan2(ds, z_ref)
             X = np.array([self.s, theta, yaw, s_dot, self.theta_dot, omega_w[2]])
             s_plan, sd_plan = s_ref, sd_ref
             if self.cfg['mpc_enable'] and self.mpc.x_h is not None and self.mpc_t0 is not None:
-                # the wheels follow the CoM motion planned by the MPC (virtual CoM of Fig. 4)
                 a = min(max((t - self.mpc_t0) / MPC_DT, 0.0), 1.0)
                 s_plan, sd_plan = (1.0 - a) * self.mpc_x0 + a * self.mpc.x_h[0]
             X_ref = np.array([s_plan - ds, theta_ref, yaw_ref, sd_plan, 0.0, yaw_rate_ref])
@@ -679,7 +622,6 @@ class WBRController(Node):
             common = float(np.clip(common, -(WHEEL_TORQUE_MAX - abs(diff)), WHEEL_TORQUE_MAX - abs(diff)))
             tau_l, tau_r = common - diff, common + diff
 
-            # ---------------- VMC ----------------
             up_b = R.T @ np.array([0.0, 0.0, 1.0])
             F_ff = -0.5 * self.F_z * np.array([up_b[0], up_b[2]])
             p_d = np.array([c_b[0] - ds, c_b[2] - z_ref])
@@ -692,8 +634,7 @@ class WBRController(Node):
         self._publish_wheels(tau_l, tau_r)
         self._push(t)
 
-        # ---------------- telemetry ----------------
-        if self.tick % 50 == 0:   # 10 Hz: late subscribers (dashboard) also learn the current phase
+        if self.tick % 50 == 0:
             self.state_pub.publish(String(data=self.phase))
         self.debug_pub.publish(Float64MultiArray(data=[
             t, theta, self.theta_dot, self.s, s_dot, 0.5 * (tau_l + tau_r) / p.wheel_torque_max,
@@ -719,7 +660,6 @@ class WBRController(Node):
                 f'gap={wheel_gap:+.3f} loaded={int(self.loaded)} cpu={self.cpu_ms:.2f}ms max_dt={self.max_dt * 1e3:.0f}ms')
             self.max_dt = 0.0
 
-    # -----------------------------------------------------------------
     def _run_mpc(self, t, s_com, s_com_dot, z, z_dot, axle_b):
         p = self.model.p
         times = t + MPC_DT * np.arange(1, MPC_HORIZON + 1)

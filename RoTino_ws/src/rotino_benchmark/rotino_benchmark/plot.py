@@ -1,13 +1,4 @@
-"""Comparison plots PID vs MPC of one scenario: every figure overlays the two laws (PID red, MPC blue).
-
-    ros2 run rotino_benchmark plot -- <scenario_dir>          # -> <scenario_dir>/plots/*.png
-
-Figures: tracking and errors, velocity error and norm of the actuation torques, disturbance response and
-phase portrait, wheel torques, legs, attitude, power and energy, horizontal phase portrait, IMU accelerations,
-plus the ZMP figures of zmp_analysis. velocita_coppie_<law>.csv holds the samples of velocita_coppie.png.
-The platform scenarios (scenarios.py, `zones`) add terreno.png: the signals against the distance travelled,
-with the obstacles shaded.
-"""
+"""Comparison plots PID vs MPC of one scenario: every figure overlays the two laws (PID red, MPC blue)."""
 
 import argparse
 import csv
@@ -55,7 +46,7 @@ def load_run_data(run_dir):
             rows = [r for r in csv.DictReader(f) if not math.isnan(_float(r.get('time_s')))]
         if not rows:
             continue
-        if 'delta_s_m' not in rows[0]:                     # logs before 01/10/2026
+        if 'delta_s_m' not in rows[0]:
             for r in rows:
                 r['delta_s_m'] = r.get('smc_s1')
         d = {k: [_float(r.get(col)) for r in rows] for k, col in COLUMNS.items()}
@@ -103,7 +94,6 @@ def disturbance_onset(data):
     return None, None
 
 
-# ---------------------------------------------------------------------------- figures
 def plot_tracking(data, out_dir):
     """References (dashed) and actual signals, left; tracking errors, right."""
     fig, ax = plt.subplots(4, 2, figsize=(13, 10), sharex=True)
@@ -137,8 +127,7 @@ def _rms(xs):
 
 
 def zone_times(d, zones):
-    """(from s, to s, label) of the obstacles: when the position reference, the same for both laws, is on
-    each of them."""
+    """(from s, to s, label) of the obstacles: when the position reference is on each of them."""
     spans = []
     for z0, z1, lab in zones:
         inside = [t for t, s in zip(d['t'], d['s_ref']) if z0 <= s <= z1]
@@ -148,8 +137,7 @@ def zone_times(d, zones):
 
 
 def plot_velocity_torque(data, out_dir, zones=()):
-    """Velocity error and norm of the actuation torques at every instant: six joints, and the wheels alone
-    (the legs hold the weight, so most of the six-joint norm is the same for every law)."""
+    """Velocity error and norm of the actuation torques at every instant: six joints, and the wheels alone."""
     fig, ax = plt.subplots(3, 1, figsize=(11, 9), sharex=True)
     rows = [('v_err', 'm/s'), ('tau_norm', 'Nm'), ('tau_w_norm', 'Nm')]
     for law in _laws(data):
@@ -188,7 +176,7 @@ def write_velocity_torque_csv(data, out_dir):
 def plot_disturbance(data, out_dir):
     """Pitch and wheel torque around the largest disturbance, and the (theta, theta_dot) portrait."""
     t0, kind = disturbance_onset(data)
-    if t0 is None:     # no push: centre on the largest pitch excursion of either law
+    if t0 is None:
         t0 = max(((abs(th), t) for d in data.values() for t, th in zip(d['t'], d['th']) if not math.isnan(th)),
                  default=(0.0, 4.0))[1] - 1.0
     fig = plt.figure(figsize=(14, 6))
@@ -196,7 +184,7 @@ def plot_disturbance(data, out_dir):
     ax_th, ax_tau, ax_ph = fig.add_subplot(gs[0, 0]), fig.add_subplot(gs[1, 0]), fig.add_subplot(gs[:, 1])
     for law in _laws(data):
         d = data[law]
-        span = 12.0 if kind == 'gradino' else 6.0          # a held force: show the new equilibrium too
+        span = 12.0 if kind == 'gradino' else 6.0
         idx = [i for i, t in enumerate(d['t']) if t0 - 1.0 <= t <= t0 + span] or list(range(len(d['t'])))
         sub = lambda k: [d[k][i] for i in idx]  # noqa: E731
         ax_th.plot(sub('t'), sub('th'), color=COLORS[law], lw=1.4, label=LABELS[law])
@@ -302,14 +290,12 @@ def plot_imu(data, out_dir):
 
 
 def plot_terrain(data, out_dir, zones, title):
-    """Pitch, CoM height, roll and wheel torque against the distance travelled along the path, with the
-    obstacles of the platform shaded: where each law is disturbed, not when."""
+    """Pitch, CoM height, roll and wheel torque against the distance travelled, obstacles shaded."""
     fig, ax = plt.subplots(4, 1, figsize=(11, 10), sharex=True)
     for law in _laws(data):
         d = data[law]
         s = d['x']
         ax[0].plot(s, d['th'], color=COLORS[law], lw=1.1, label=LABELS[law])
-        # the two laws publish different CoM heights (whole robot / upper body): plot the change from the start
         z0 = sorted(v for v in d['z'][:250] if not math.isnan(v))
         z0 = z0[len(z0) // 2] if z0 else 0.0
         ax[1].plot(s, [1e3 * (v - z0) for v in d['z']], color=COLORS[law], lw=1.1, label=LABELS[law])
@@ -328,8 +314,7 @@ def plot_terrain(data, out_dir, zones, title):
 
 
 def generate_plots(run_dir, out_dir=None):
-    """All figures of a scenario; returns the zmp_analysis results ({law: series}, {} if unavailable) for
-    reuse, or None when there is no data."""
+    """All figures of a scenario; returns the zmp_analysis results ({} if unavailable), None without data."""
     data = load_run_data(run_dir)
     if not data:
         print(f'nessun CSV valido in {run_dir}')
@@ -352,13 +337,12 @@ def generate_plots(run_dir, out_dir=None):
         for law, o in results.items():
             write_zmp_csv(o, os.path.join(out_dir, f'zmp_{law}.csv'))
         saved += generate_zmp_plots(run_dir, out_dir, results)
-    except Exception as exc:   # old logs without base_* columns, or no URDF available
+    except Exception as exc:
         print(f'grafici ZMP non generati: {exc}')
     print(f'{len(saved)} grafici in {out_dir}')
     return results
 
 
-# ---------------------------------------------------------------------------- suite summary
 def summary_figure(results, path):
     """One panel per scenario: key metrics of PID and MPC, bars normalised to the larger of the two."""
     from rotino_benchmark.compare import METRIC, better, scenario_name

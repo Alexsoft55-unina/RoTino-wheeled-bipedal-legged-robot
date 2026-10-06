@@ -64,8 +64,7 @@ class LinearPlant:
 
 
 def run(wbr, plant, ctrl, T, path=None, delay=1, impulse_at=None, dv=0.0):
-    """Closed loop with `delay` samples of actuation delay; path(times) -> (s, v) is the planned contact
-    path, previewed as in the controller. Returns time, states, torques, desired ZMP offsets."""
+    """Closed loop with `delay` samples of actuation delay; returns time, states, torques, desired ZMP offsets."""
     preview = LipmPreview()
     queue = [0.0] * delay
     log = []
@@ -92,9 +91,8 @@ def test_feedforward_holds_the_reference_acceleration(wbr):
     k_sc = wbr.p.m_b * e['l'] / wbr.kin.total_mass
     s_ff, tau_ff = ctrl.feedforward(1.0)
     th = s_ff / k_sc
-    assert math.isclose(c['a2'] * th + c['b2'] * 2 * tau_ff, 0.0, abs_tol=1e-9)   # no pitch acceleration
-    assert math.isclose(c['a1'] * th + c['b1'] * 2 * tau_ff, 1.0, rel_tol=1e-9)   # wheels accelerate at 1 m/s^2
-    # the ZMP falls behind the CoM by about h a / g, the LIPM value
+    assert math.isclose(c['a2'] * th + c['b2'] * 2 * tau_ff, 0.0, abs_tol=1e-9)
+    assert math.isclose(c['a1'] * th + c['b1'] * 2 * tau_ff, 1.0, rel_tol=1e-9)
     h = (wbr.p.m_b * (e['l'] + wbr.p.r) + 2 * wbr.p.m_w * wbr.p.r) / wbr.kin.total_mass
     assert 0.8 < s_ff / (h / G) < 1.25
 
@@ -103,31 +101,31 @@ def test_feedforward_holds_the_reference_acceleration(wbr):
     (0.0, 1.0, 1), (0.0, 0.8, 2), (0.0, 1.2, 2), (-0.3, 1.0, 2), (0.3, 1.0, 2)])
 def test_recovers_from_a_lean_robustly(wbr, hip, mass_scale, delay):
     plant = LinearPlant(wbr, hip, mass_scale)
-    plant.x[1] = 0.03 / plant.k_sc                  # CoM 3 cm ahead of the axle
+    plant.x[1] = 0.03 / plant.k_sc
     log = run(wbr, plant, ZmpSagittalBalance.from_model(wbr), 12.0, delay=delay)
     tail = log[log[:, 0] > 9.0]
-    assert np.all(np.abs(tail[:, 2] * plant.k_sc) < 1e-3)      # lean back under 1 mm
-    assert np.all(np.abs(tail[:, 1]) < 0.02)                   # back to the start within 2 cm
+    assert np.all(np.abs(tail[:, 2] * plant.k_sc) < 1e-3)
+    assert np.all(np.abs(tail[:, 1]) < 0.02)
     assert np.max(np.abs(log[:, 5])) <= 10.0
 
 
 def test_tracks_a_trapezoid_with_small_error(wbr):
     plant = LinearPlant(wbr)
-    path = lambda t: trapezoid_path(t - 1.5, 1.0, 0.6, 2.0)   # the zmp_velocity campaign
+    path = lambda t: trapezoid_path(t - 1.5, 1.0, 0.6, 2.0)
     log = run(wbr, plant, ZmpSagittalBalance.from_model(wbr), 10.0, path=path)
     err = log[:, 1] - path(log[:, 0])[0]
     assert np.max(np.abs(err)) < 0.01
     assert abs(err[-1]) < 0.005
     lean = log[:, 2] * plant.k_sc
-    assert np.max(np.abs(lean)) < 1.5 * 0.6 * plant.h / G       # ZMP offset close to the LIPM h a / g
+    assert np.max(np.abs(lean)) < 1.5 * 0.6 * plant.h / G
 
 
 def test_rejects_the_push_of_the_benchmark(wbr):
     plant = LinearPlant(wbr)
-    dv = 2.7 / wbr.kin.total_mass                   # 2.7 N s on the torso, as in the zmp_push campaign
+    dv = 2.7 / wbr.kin.total_mass
     log = run(wbr, plant, ZmpSagittalBalance.from_model(wbr), 12.0, impulse_at=1.0, dv=-dv)
     assert np.max(np.abs(log[:, 5])) <= 10.0
-    assert abs(log[-1, 1]) < 0.01 and abs(log[-1, 3]) < 0.01     # back at the start, at rest
+    assert abs(log[-1, 1]) < 0.01 and abs(log[-1, 3]) < 0.01
 
 
 def test_integral_removes_a_constant_disturbance(wbr):
@@ -137,10 +135,10 @@ def test_integral_removes_a_constant_disturbance(wbr):
     queue = [0.0]
     for k in range(int(15.0 / DT)):
         s, th, sd, thd = plant.x
-        tau, _ = ctrl.step(DT, plant.h, s, sd, plant.k_sc * th + 0.01, plant.k_sc * thd)   # 1 cm bias
+        tau, _ = ctrl.step(DT, plant.h, s, sd, plant.k_sc * th + 0.01, plant.k_sc * thd)
         queue.append(tau)
         plant.step(queue.pop(0))
-    assert abs(plant.x[3]) < 1e-3                   # no residual speed
+    assert abs(plant.x[3]) < 1e-3
     assert abs(plant.x[1]) < 0.05
 
 
@@ -149,8 +147,8 @@ def test_lateral_lean_cancels_the_centripetal_zmp_shift():
     h, a_y = 0.19, 1.0
     for _ in range(100):
         lean, dz, info = lat.step(DT, h, h * a_y / G)
-    assert math.isclose(math.sin(lean), a_y / G, rel_tol=1e-9)     # the lean of a bicycle
-    assert lean > 0 and dz > 0                      # left turn: lean left, right leg longer
+    assert math.isclose(math.sin(lean), a_y / G, rel_tol=1e-9)
+    assert lean > 0 and dz > 0
     assert math.isclose(dz, 0.294 * math.tan(lean))
 
 
@@ -166,33 +164,33 @@ def test_lateral_lean_is_rate_limited_and_saturated():
 def test_measured_zmp_feedback_moves_the_com_away_from_it():
     lat = ZmpLateralCompensation(track=0.294, gains=LateralGains(k_zmp=0.3, rate_max=100.0))
     for _ in range(500):
-        lean, _, _ = lat.step(DT, 0.19, 0.0, y_zmp=-0.02)          # ZMP 2 cm to the right
-    assert lean > 0                                              # lean left
+        lean, _, _ = lat.step(DT, 0.19, 0.0, y_zmp=-0.02)
+    assert lean > 0
 
 
 def test_lateral_preview_leans_before_the_turn_and_zeroes_the_lipm_zmp():
     """y_c = smooth(h a_y / g) solves y_c - y_c_dd / omega^2 = h a_y / g: the LIPM lateral ZMP stays at 0."""
     h = 0.19
     omega = math.sqrt(G / h)
-    a_y = lambda t: 1.5 * np.clip(t - 1.0, 0.0, 1.0) * np.clip(3.0 - t, 0.0, 1.0)   # turn from 1 s to 3 s
+    a_y = lambda t: 1.5 * np.clip(t - 1.0, 0.0, 1.0) * np.clip(3.0 - t, 0.0, 1.0)
     prev = LipmPreview()
     ts = np.arange(0.0, 4.0, DT)
     y = np.array([prev.smooth(lambda tt: h * a_y(tt) / G, t, omega) for t in ts])
-    assert y[int(0.9 / DT)] > 0.0                                # leaning 0.1 s before the turn starts
+    assert y[int(0.9 / DT)] > 0.0
     ydd = np.gradient(np.gradient(y, DT), DT)
     zmp = y - ydd / omega ** 2 - h * a_y(ts) / G
-    assert np.max(np.abs(zmp[100:-100])) < 1e-3                  # within 1 mm (kernel truncation, sampling)
+    assert np.max(np.abs(zmp[100:-100])) < 1e-3
 
 
 def test_lipm_preview_leans_before_the_acceleration_step():
     path = lambda t: trapezoid_path(t - 1.0, 1.0, 0.6, 2.0)
     omega = math.sqrt(G / 0.19)
     acc, _ = LipmPreview()(path, 0.9, omega)
-    assert 0.0 < acc < 0.6                          # already leaning forward 0.1 s before the start
+    assert 0.0 < acc < 0.6
     acc, _ = LipmPreview()(path, 2.0, omega)
-    assert math.isclose(acc, 0.6, rel_tol=0.02)     # steady acceleration: ZMP h a / g behind the CoM
+    assert math.isclose(acc, 0.6, rel_tol=0.02)
     acc, jerk = LipmPreview()(lambda t: (0 * t + 0.3, 0 * t), 5.0, omega)
-    assert acc == 0.0 and jerk == 0.0               # standing still: no lean
+    assert acc == 0.0 and jerk == 0.0
 
 
 def test_trapezoid_path_matches_the_scalar_profile():

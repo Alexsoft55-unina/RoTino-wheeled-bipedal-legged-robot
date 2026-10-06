@@ -1,20 +1,4 @@
-"""
-RoTino test bench logger: subscribes to every topic published by
-balance_jump_controller.py and writes one labeled CSV row per control step
-(500 Hz), ready to be dragged straight into PlotJuggler.
-
-Columns cover: jump state, COM lean/rate, wheel position/velocity, wheel
-command, COM height/vertical velocity, wheel-ground contact forces (total
-and per side), wheel clearance, contact "loaded" flag, every hip/knee/wheel
-joint position and velocity, commanded wheel torques and IMU gyro/accel.
-
-The last columns add references and errors the controllers publish beyond
-that. Heading and height come from /rotino/wbr_state, which the logger already
-receives. The estimator error of the MPC (/rotino/estimation_error) needs one
-more subscription and is recorded only with `extra_topics:=true` (NaN
-otherwise): the main thread of this node already runs at about 90 % of a core
-and the controllers at 97 %, so an extra topic is paid by both.
-"""
+"""RoTino test bench logger: one labeled CSV row per control step (500 Hz), ready for PlotJuggler."""
 
 import csv
 import math
@@ -32,7 +16,7 @@ from std_msgs.msg import Float64MultiArray, String
 JOINT_NAMES = ['left_hip', 'right_hip', 'left_knee', 'right_knee',
                'left_wheel_joint', 'right_wheel_joint']
 
-CONTACT_STALE_TIME = 0.02  # s; older contact samples are treated as "no contact"
+CONTACT_STALE_TIME = 0.02
 
 HEADER = [
     'time_s', 'jump_state',
@@ -52,24 +36,14 @@ HEADER = [
     's_ref_m', 's_err_m',
     'xdot_ref_ms', 'xdot_err_ms',
     'com_z_ref_m', 'com_z_err_mm',
-    'delta_s_m', 'push_force_N',   # desired CoM offset ahead of the axle (MPC delta_s, PID s_des)
-    # ground-truth base pose/twist (/rotino/odom) and measured wheel contact points: ZMP study (zmp.py)
+    'delta_s_m', 'push_force_N',
     'base_x_m', 'base_y_m', 'base_z_m', 'base_qx', 'base_qy', 'base_qz', 'base_qw',
     'base_vx', 'base_vy', 'base_vz', 'base_wx', 'base_wy', 'base_wz',
     'contact_L_x', 'contact_L_y', 'contact_L_z', 'contact_R_x', 'contact_R_y', 'contact_R_z',
-    # stamps of the odom / joint_states samples in this row: rows repeat the latest message, and the
-    # ZMP needs second derivatives, so the analysis resamples each signal on its own stamps
     'odom_stamp_s', 'joints_stamp_s',
-    # ZMP-based PID (/rotino/zmp_ctrl, NaN for the other laws): longitudinal ZMP ahead of the CoM, desired
-    # and actual (contact), capture-point error, reference CoM acceleration, lateral lean command
     'zmp_des_mm', 'zmp_ctrl_mm', 'dcm_err_mm', 'acc_ref_ms2', 'lean_cmd_deg',
-    # step disturbance (rotino_benchmark disturbance): horizontal persistent force on the torso, held
     'step_force_N',
-    # also in /rotino/wbr_state: heading reference and error, CoM height above the axle (the height
-    # com_z_ref_m refers to; com_z_m is above the ground) and its error
     'yaw_ref_deg', 'yaw_err_deg', 'com_z_axle_m', 'com_z_axle_err_mm',
-    # extra_topics only, /rotino/estimation_error (MPC): Kalman estimate - ground truth of the torso position
-    # and velocity, world frame
     'est_err_x_m', 'est_err_y_m', 'est_err_z_m', 'est_err_vx_ms', 'est_err_vy_ms', 'est_err_vz_ms',
 ]
 
@@ -81,11 +55,7 @@ def stamp_to_sec(stamp):
 
 
 def contact_force_from_msg(msg):
-    """Sum of contact-wrench force magnitudes and mean contact point for wheel/ground contacts.
-
-    Gazebo Fortress leaves `wrenches` empty, so the force is 0 there: the ZMP study rebuilds the
-    loads from the dynamics instead (zmp.py). The contact positions are filled.
-    """
+    """Sum of contact-wrench force magnitudes and mean contact point for wheel/ground contacts."""
     total = 0.0
     ground_contact = False
     points = []
@@ -105,7 +75,6 @@ class TestBenchLogger(Node):
 
     def __init__(self):
         super().__init__('rotino_test_bench_logger')
-        # <workspace>/install/rotino_description/share/rotino_description -> <workspace>/test_bench_logs
         pkg_share = get_package_share_directory('rotino_description')
         self.declare_parameter('controller', 'unknown')
         self.declare_parameter('output_dir', os.path.join(
@@ -167,7 +136,6 @@ class TestBenchLogger(Node):
 
         self.get_logger().info(f'Test bench logging to: {self.csv_path}')
 
-    # -----------------------------------------------------------------
     def _wbr_cb(self, msg):
         if len(msg.data) >= 12:
             self.wbr_data = {
@@ -182,7 +150,6 @@ class TestBenchLogger(Node):
             }
 
     def _zmp_ctrl_cb(self, msg):
-        # [t, zmp_des, zmp, xi_err, acc_ref, a_y, lean_cmd, dz, y_zmp, margin, e_long]
         if len(msg.data) >= 7:
             d = msg.data
             self.zmp_ctrl = [1e3 * d[1], 1e3 * d[2], 1e3 * d[3], d[4], math.degrees(d[6])]
@@ -198,7 +165,7 @@ class TestBenchLogger(Node):
         self.last_wrench_stamp = self.get_clock().now().nanoseconds * 1e-9
 
     def _step_cb(self, msg):
-        self.step_force += math.hypot(msg.wrench.force.x, msg.wrench.force.y)   # persistent wrenches add up
+        self.step_force += math.hypot(msg.wrench.force.x, msg.wrench.force.y)
 
     def _step_clear_cb(self, _msg):
         self.step_force = 0.0
@@ -254,7 +221,6 @@ class TestBenchLogger(Node):
         stamp, point = self.contact_point[side]
         return list(point) if point is not None and now_s - stamp <= CONTACT_STALE_TIME else [float('nan')] * 3
 
-    # -----------------------------------------------------------------
     def _debug_cb(self, msg):
         (t, theta, theta_dot, x, xdot, wheel_u, com_z, com_z_vel,
          fn_total, min_wheel_gap, loaded) = msg.data
@@ -282,7 +248,7 @@ class TestBenchLogger(Node):
             sd_ref = self.wbr_data['sd_ref']
             sd_err = xdot - sd_ref
             z_ref = self.wbr_data['z_ref']
-            z_err = (com_z - z_ref) * 1000.0  # mm
+            z_err = (com_z - z_ref) * 1000.0
             delta_s = self.wbr_data['delta_s']
         else:
             th_ref_deg = 0.0

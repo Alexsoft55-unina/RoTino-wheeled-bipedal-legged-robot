@@ -1,17 +1,4 @@
-"""Runs the whole benchmark: every scenario of scenarios.py with the PID and the MPC, then the comparison.
-
-    ros2 run rotino_benchmark suite                              # all scenarios, ~10 min
-    ros2 run rotino_benchmark suite -- spinta trapezio           # a subset
-    ros2 run rotino_benchmark suite -- --list                    # what the scenarios are
-
-Output (<ws>/benchmark_runs/suite_<date>/):
-    riepilogo.md / .csv / .png     key metrics of every scenario, PID vs MPC, and the balance of wins
-    <scenario>/confronto.md        full table of the scenario and its plots
-    <scenario>/plots/              comparison figures (PID red, MPC blue); velocita_coppie_<law>.csv:
-                                   velocity error and norm of the actuation torques at every instant
-    <scenario>/dati/               errors, references, states and actuators as CSV by theme (export.py)
-    <scenario>/rotino_<law>_*.csv  logs, one per law; <scenario>/logs/ simulation output
-"""
+"""Runs the whole benchmark: every scenario of scenarios.py with the PID and the MPC, then the comparison."""
 
 import argparse
 import os

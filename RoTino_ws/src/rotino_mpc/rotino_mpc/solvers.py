@@ -1,11 +1,4 @@
-"""
-Numerical blocks of the WBR controller (Cui et al., Micromachines 2022, 13, 747), NumPy only:
-  - care / lqr_gain:   continuous LQR for the TV-LQR of the VL-WIP (eqs. 15-16)
-  - LQRSchedule:       K(l) precomputed on a grid of pendulum lengths and interpolated
-  - box_qp:            accelerated projected gradient for box-constrained QPs
-  - UpperBodyMPC:      condensed MPC of the lumped-mass upper body (eqs. 9, 17-18)
-  - AxisKalman:        linear Kalman filter of eqs. 20-21, one instance per world axis
-"""
+"""Numerical blocks of the WBR controller (Cui et al., Micromachines 2022, 13, 747), NumPy only."""
 
 import numpy as np
 
@@ -77,11 +70,7 @@ def _condense(A, B, c, N):
 
 
 class UpperBodyMPC:
-    """Eq. (9) split into its two decoupled blocks, each a box-constrained condensed QP (eqs. 17-18).
-
-    horizontal: [s, s_dot],  s_ddot = (g + z_ddot) / h * delta_s,   |delta_s| <= min(mu h, sqrt(L_max^2 - z_b^2))
-    vertical:   [z, z_dot],  z_ddot = F_z / m_b - g,                F_min <= F_z <= F_max
-    """
+    """Eq. (9) split into its two decoupled blocks, each a box-constrained condensed QP (eqs. 17-18)."""
 
     def __init__(self, m_b, horizon, dt, S_h, W_h, S_v, W_v):
         self.m_b, self.N, self.dt = m_b, horizon, dt
@@ -89,7 +78,7 @@ class UpperBodyMPC:
         self.Ah = np.array([[1.0, dt], [0.0, 1.0]])
         self.u_h = np.zeros(horizon)
         self.u_v = np.full(horizon, m_b * G)
-        self.x_h = None   # predicted [s, s_dot] at t + dt, t + 2 dt, ...
+        self.x_h = None
         self.x_v = None
 
     def _solve(self, A, B, c, x0, x_ref, S, W, lo, hi, warm):
@@ -120,8 +109,7 @@ class UpperBodyMPC:
 
 
 class AxisKalman:
-    """Eqs. (20)-(21) for one world axis: state [p, v] of the torso, input IMU acceleration,
-    observation [p, v] from wheel odometry + leg kinematics."""
+    """Eqs. (20)-(21) for one world axis: linear Kalman filter of the torso state [p, v]."""
 
     def __init__(self, q_acc, r_pos, r_vel):
         self.q_acc = q_acc

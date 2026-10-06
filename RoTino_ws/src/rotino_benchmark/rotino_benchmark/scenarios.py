@@ -1,14 +1,4 @@
-"""The benchmark scenarios: one place that says what is run, for how long, and what to look at.
-
-Every scenario is run with the same world, URDF and launch arguments for the PID and the MPC; only the
-controller package changes. `key` lists the metrics (compare.METRICS) that summarise the scenario.
-
-Disturbances: `spinta` is the impulsive push applied by the controllers; `gradino` is a constant force
-switched on and held (disturbance.py, same for both laws); `dossi`, `rampa` and `piastrelle` cross the
-three uneven-ground platforms of rotino_world.sdf. The robot spawns in front of each platform
-(spawn_x/spawn_y/spawn_yaw of robot.launch.py) and drives straight across it with the trapezoidal
-profile; `zones` gives where the obstacles are along the path, in metres from the start.
-"""
+"""The benchmark scenarios: one place that says what is run, for how long, and what to look at."""
 
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -18,15 +8,13 @@ from dataclasses import dataclass, field
 class Scenario:
     title: str
     description: str
-    args: list = field(default_factory=list)   # launch arguments of robot.launch.py
-    duration: float = 20.0                      # s of logging after the logger starts
+    args: list = field(default_factory=list)
+    duration: float = 20.0
     key: tuple = ()
-    disturbance: dict = None                    # step force: {'force': N (+ = backwards), 'start_time': s}
-    zones: tuple = ()                           # obstacles along the path: (from m, to m, label)
+    disturbance: dict = None
+    zones: tuple = ()
 
 
-# Trapezoid used on the platforms: same speed and acceleration for both laws, slow enough to keep the
-# wheels on the obstacles for a few control periods but fast enough to load them dynamically.
 PLATFORM_DRIVE = ['velocity_enable:=true', 'velocity_max:=0.5', 'accel_max:=0.6']
 
 

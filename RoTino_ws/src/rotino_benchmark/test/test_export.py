@@ -9,7 +9,6 @@ import pytest
 from rotino_benchmark import compare, export
 
 N = 400
-# torso yawed 30 deg and pitched 10 deg (yaw about z, then pitch about the new y)
 QUAT = (-math.sin(math.radians(5.0)) * math.sin(math.radians(15.0)),
         math.sin(math.radians(5.0)) * math.cos(math.radians(15.0)),
         math.cos(math.radians(5.0)) * math.sin(math.radians(15.0)),
@@ -65,7 +64,6 @@ def test_every_file_has_one_row_per_control_step(tmp_path):
     track = read(os.path.join(out, 'inseguimento_pid.csv'))
     assert float(track[7]['theta_err_deg']) == 1.5 and float(track[7]['yaw_err_deg']) == 1.0
     assert math.isclose(float(track[-1]['s_ref_m']), 0.1 * 0.002 * N - 0.01, rel_tol=1e-5)
-    # contact and phase belong to the raw log only
     assert not {'jump_state', 'loaded', 'min_wheel_gap_m'} & set(track[0])
     assert not {'jump_state', 'loaded', 'min_wheel_gap_m'} & set(read(os.path.join(out, 'stato_pid.csv'))[0])
 
@@ -75,7 +73,7 @@ def test_actuator_signals_and_their_norms(tmp_path):
     act = read(os.path.join(out, 'attuazione_pid.csv'))[10]
     assert list(act)[:7] == ['time_s', *compare.TORQUE_COLUMNS]
     assert math.isclose(float(act['wheel_torque_common_Nm']), 0.4)
-    assert math.isclose(float(act['wheel_torque_diff_Nm']), 0.1)                 # right - left: turning left
+    assert math.isclose(float(act['wheel_torque_diff_Nm']), 0.1)
     assert math.isclose(float(act['wheel_tau_norm_Nm']), math.hypot(0.3, 0.5), rel_tol=1e-5)
     assert math.isclose(float(act['leg_tau_norm_Nm']), 2.0)
     assert math.isclose(float(act['tau_norm_Nm']), math.sqrt(0.3 ** 2 + 0.5 ** 2 + 4.0), rel_tol=1e-5)
@@ -86,7 +84,7 @@ def test_error_norms_group_the_errors_by_unit(tmp_path):
     pid, mpc = (read(os.path.join(out, f'inseguimento_{law}.csv'))[5] for law in ('pid', 'mpc'))
     assert math.isclose(float(pid['err_angle_norm_deg']), math.hypot(1.5, 1.0), rel_tol=1e-5)
     assert math.isclose(float(mpc['err_angle_norm_deg']), math.hypot(1.5, 1.0), rel_tol=1e-5)
-    assert math.isclose(float(pid['err_pos_norm_m']), 0.01)                      # no height reference: travel only
+    assert math.isclose(float(pid['err_pos_norm_m']), 0.01)
     assert math.isclose(float(mpc['err_pos_norm_m']), math.hypot(0.01, 0.002), rel_tol=1e-5)
 
 
@@ -100,7 +98,6 @@ def test_torso_attitude_comes_from_the_quaternion(tmp_path):
 def test_columns_follow_what_each_log_has(tmp_path):
     out = make_scenario(tmp_path, extra=EST)
     pid, mpc = (read(os.path.join(out, f'inseguimento_{law}.csv'))[0] for law in ('pid', 'mpc'))
-    # the PID publishes its measured height in the place of the reference: no reference, no error
     assert 'com_z_axle_m' in pid and 'com_z_ref_m' not in pid and 'com_z_axle_err_mm' not in pid
     assert float(mpc['com_z_axle_err_mm']) == -2.0 and math.isclose(float(mpc['com_z_ref_m']), 0.135)
     assert float(read(os.path.join(out, 'stato_mpc.csv'))[0]['est_err_vz_ms']) == 0.01
@@ -129,7 +126,7 @@ def test_empty_or_truncated_logs_do_not_break_the_export(tmp_path):
     assert export.export_scenario(str(tmp_path)) is None
     write_log(tmp_path / 'rotino_mpc_1.csv', n=50)
     with open(tmp_path / 'rotino_mpc_1.csv', 'a') as f:
-        f.write('0.102,BALANCE,2.0')                         # the logger was killed while writing a row
+        f.write('0.102,BALANCE,2.0')
     out = export.export_scenario(str(tmp_path))
     rows = read(os.path.join(out, 'attuazione_mpc.csv'))
     assert len(rows) == 51 and rows[-1]['wheel_L_torque_cmd'] == 'nan'
@@ -148,14 +145,13 @@ def test_analyse_scenario_writes_the_data_once(tmp_path, capsys):
     assert len(read(track)) == 2000
     stamp = os.path.getmtime(track)
     os.utime(track, (stamp - 100.0, stamp - 100.0))
-    assert compare.analyse_scenario(str(tmp_path), plots=False)          # cached: the CSVs are not rebuilt
+    assert compare.analyse_scenario(str(tmp_path), plots=False)
     assert os.path.getmtime(track) == stamp - 100.0
     assert compare.analyse_scenario(str(tmp_path), recompute=True, plots=False)
     assert os.path.getmtime(track) > stamp - 100.0
     capsys.readouterr()
 
 
-# ---------------------------------------------------------------------------- logger
 def test_logger_writes_one_value_per_column(tmp_path):
     rclpy = pytest.importorskip('rclpy')
     from std_msgs.msg import Float64MultiArray
@@ -170,7 +166,7 @@ def test_logger_writes_one_value_per_column(tmp_path):
                      '-p', 'extra_topics:=true'])
     try:
         node = logger.TestBenchLogger()
-        node._debug_cb(array([0.05, 0, 0, 0, 0, 0, 0.19, 0, 42, 0, 1]))       # nothing else received yet
+        node._debug_cb(array([0.05, 0, 0, 0, 0, 0, 0.19, 0, 42, 0, 1]))
         node._wbr_cb(array(wbr))
         node._est_err_cb(array([1e-3, 2e-3, 3e-3, 0.01, 0.02, 0.03]))
         node._debug_cb(array([0.1, 0, 0, 0, 0, 0, 0.19, 0, 42, 0, 1]))

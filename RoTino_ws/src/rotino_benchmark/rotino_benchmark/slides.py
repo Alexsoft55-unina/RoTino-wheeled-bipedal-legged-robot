@@ -1,21 +1,4 @@
-"""Slide versions of the comparison figures: one message per figure, 16:9, large type, the release left out.
-
-    ros2 run rotino_benchmark slides -- <scenario_dir>     # -> <scenario_dir>/slide/*.png
-    ros2 run rotino_benchmark slides -- <suite_dir>        # every scenario of the suite
-
-The figures of plot.py are made for a report: up to eight panels and small type. These are made for a projector,
-at most three panels each, and start RELEASE_SKIP_S after the release, whose transient would set the scale of
-every axis. Which ones are drawn depends on what the scenario does:
-
-    errori.png        pitch and position error                                    always
-    coppie.png        common and differential wheel torque                        always
-    avvio.png         speeds and pitch around the start of the scripted motion    scenarios with a motion
-    disturbo.png      pitch after the push or the step force, phase portrait      scenarios with a disturbance
-    terreno.png       pitch, roll and CoM height along the path, obstacles shaded platform scenarios
-    percorso.png      path of the torso seen from above                           planar scenarios
-    zmp_laterale.png  lateral ZMP and load of the lighter wheel                   planar scenarios with plots/zmp_*.csv
-    quota.png         CoM height and pitch                                        height and jump scenarios
-"""
+"""Slide versions of the comparison figures: one message per figure, 16:9, large type, the release left out."""
 
 import argparse
 import csv
@@ -43,7 +26,7 @@ STYLE = {
     'xtick.color': INK, 'ytick.color': INK,
 }
 TIME_LABEL = 'tempo dal rilascio [s]'
-TERRAIN_BEFORE_M, TERRAIN_AFTER_M = 0.4, 0.8     # terreno.png: metres shown before the first and after the last obstacle
+TERRAIN_BEFORE_M, TERRAIN_AFTER_M = 0.4, 0.8
 
 
 def load(run_dir):
@@ -107,7 +90,6 @@ def _finish(fig, axes, title, out_dir, name, xlabel=TIME_LABEL):
     axes[-1].set_xlabel(xlabel)
     fig.tight_layout(rect=(0, 0, 1, 0.86))
     fig.suptitle(title, x=0.012, y=0.985, ha='left', fontsize=25, fontweight='bold')
-    # the legend has its own row under the title: inside the axes it would cover the curves
     fig.legend(*axes[0].get_legend_handles_labels(), loc='upper left', bbox_to_anchor=(0.005, 0.93), ncol=5,
                frameon=False, handlelength=1.6, columnspacing=1.6)
     path = os.path.join(out_dir, name)
@@ -127,7 +109,6 @@ def _mark_time(axes, logs, zones):
             ax.axvspan(a, b, color=ZONE, alpha=0.16, lw=0, label=label if i == 0 and k == 0 else None)
 
 
-# ---------------------------------------------------------------------------- figures
 def fig_errors(logs, title, out_dir, zones=()):
     fig, ax = plt.subplots(2, 1, sharex=True)
     for law, d in logs.items():
@@ -182,7 +163,7 @@ def fig_disturbance(logs, title, out_dir):
     t0, kind = onset(logs)
     if t0 is None:
         return None
-    span = 10.0 if kind == 'gradino' else 5.0          # a held force: show the new equilibrium too
+    span = 10.0 if kind == 'gradino' else 5.0
     fig, ax = plt.subplots(1, 2, gridspec_kw={'width_ratios': [1.35, 1.0]})
     for law, d in logs.items():
         m = (d['time_s'] >= t0 - 0.5) & (d['time_s'] <= t0 + span)
@@ -202,7 +183,6 @@ def fig_terrain(logs, title, out_dir, zones):
     """Pitch, roll and change of CoM height against the distance travelled, obstacles shaded."""
     if not zones:
         return None
-    # the obstacles and what follows them: the start and the braking of the trapezoid stay out of the picture
     lo, hi = zones[0][0] - TERRAIN_BEFORE_M, zones[-1][1] + TERRAIN_AFTER_M
     fig, ax = plt.subplots(3, 1, sharex=True)
     for law, d in logs.items():
@@ -248,7 +228,7 @@ def fig_lateral_zmp(run_dir, logs, title, out_dir):
         with open(path, newline='') as f:
             rows = list(csv.DictReader(f))
         col = {k: np.array([float(r[k]) for r in rows]) for k in ('t_s', 'zmp_y_rel', 'fn_left_N', 'fn_right_N')}
-        t = col['t_s'] - np.nanmedian(d['odom_stamp_s'] - d['time_s'])      # simulation stamps -> time since release
+        t = col['t_s'] - np.nanmedian(d['odom_stamp_s'] - d['time_s'])
         series[law] = (t, col, t >= RELEASE_SKIP_S)
     fig, ax = plt.subplots(2, 1, sharex=True)
     for law, (t, col, m) in series.items():

@@ -1,25 +1,4 @@
-"""
-RoTino balance + vertical jump controller for ROS 2 Humble / Gazebo Fortress: cascaded PID with the
-Zero Moment Point as the balance variable (rotino_pid/zmp_balance.py).
-
-Port of RoTino_Ctrl_BalJumpAchieve.py (MuJoCo, position_servo leg mode), redesigned for torque control:
-  - wheels: capture-point PI -> desired ZMP -> ZMP-offset PD on the wheel torque, with LIPM preview of
-    the planned path (the CoM leans before the wheels accelerate) and model feedforward
-  - lateral ZMP: the torso leans into turns (one leg shorter) so that the ZMP stays at the centre of
-    the wheel segment; feedforward h a_y / g plus a correction on the measured multibody ZMP
-  - legs: Cartesian PD (wheel centre w.r.t. the hip) with weight feedforward. The joint-space PD of the
-    MuJoCo port (160/200 Nm/rad) entered a bang-bang limit cycle at 500 Hz (diagnostics/06_diagnosi.txt)
-  - seven-state hybrid jump supervisor with phase-dependent gains
-  - contact-force hysteresis + wheel clearance + vertical COM velocity for take-off/landing
-
-MuJoCo -> ROS 2 mapping:
-  data.qpos / qvel (joints)      -> /joint_states               (joint_state_broadcaster)
-  torso freejoint pose           -> /rotino/odom                (gz OdometryPublisher, ground truth)
-  robot_com / wheel framepos     -> forward kinematics on the URDF (kinematics.py)
-  mj_contactForce wheel/ground   -> /rotino/{left,right}_wheel_contact (gz Contact sensor)
-  wheel motor ctrl (gear 18)     -> /wheel_effort_controller/commands  [Nm]
-  hip/knee                       -> /leg_effort_controller/commands torques [Nm]
-"""
+"""RoTino balance + vertical jump controller: cascaded PID with the ZMP as the balance variable."""
 
 import math
 import time
@@ -40,12 +19,9 @@ from rotino_description.zmp import ZmpEstimator
 from rotino_pid.zmp_balance import (LipmPreview, ZmpLateralCompensation, ZmpSagittalBalance,
                                     trapezoid_path)
 
-# =========================================================
-# Geometry / actuation (RoTino_BOT(II).xml)
-# =========================================================
 WHEEL_RADIUS = 0.06
-WHEEL_GEAR = 18.0            # the MuJoCo motor gear: wheel_u = torque / WHEEL_GEAR in the debug topic
-WHEEL_TORQUE_MAX = 10.0      # Nm per wheel, as the MPC
+WHEEL_GEAR = 18.0
+WHEEL_TORQUE_MAX = 10.0
 G = 9.81
 
 LEG_JOINTS = ['left_hip', 'right_hip', 'left_knee', 'right_knee']
@@ -53,9 +29,6 @@ WHEEL_JOINTS = ['left_wheel_joint', 'right_wheel_joint']
 LEFT_WHEEL_LINK = 'left_wheel_link'
 RIGHT_WHEEL_LINK = 'right_wheel_link'
 
-# Cartesian PD of the wheel centre in the hip frame (x forward, z up), per leg: tau = J^T F.
-# In joint space the balance gains are ~50 / 30 Nm/rad on hip / knee (the joint PD had 160 / 200) and the
-# damping is ~1 Nm s/rad, so a single 2 ms step can no longer overshoot the reflected leg inertia.
 LEG_KP_STAND = np.diag([1500.0, 5000.0])
 LEG_KD_STAND = np.diag([40.0, 80.0])
 LEG_KP_JUMP = np.diag([3000.0, 4000.0])
@@ -66,67 +39,45 @@ LEG_TORQUE_MAX = 50.0
 LEG_FORCE_LIMIT = 60.0
 HIP_CTRL_MIN, HIP_CTRL_MAX = -0.60, 0.60
 KNEE_CTRL_MIN, KNEE_CTRL_MAX = -0.80, 0.80
-LEG_LENGTH_MIN, LEG_LENGTH_MAX = 0.12, 0.24   # hip-axle vertical distance [m]
+LEG_LENGTH_MIN, LEG_LENGTH_MAX = 0.12, 0.24
 
-# Time the robot stays attached to the anchor with the legs held, before release.
 HOLD_TIME = 1.0
 RELEASE_REPEAT_TIME = 0.05
-MOTION_START_TIME = 2.0      # reference motions start this long after release
-# wait_start: the motions start this long after /rotino/cmd_start instead, so that the preview of the PID
-# (about 1.1 s ahead) and the horizon of the MPC (0.5 s) see them coming exactly as after a release
+MOTION_START_TIME = 2.0
 START_LEAD = 1.0
-PHYSICS_DT = 0.0005          # rotino_world.sdf max_step_size (push impulse)
+PHYSICS_DT = 0.0005
 PUSH_TICKS = 25
 
-# =========================================================
-# Balance (gains in rotino_pid/zmp_balance.py)
-# =========================================================
 COMZ_VEL_FILTER = 0.40
-AY_FILTER = 0.05             # s, measured centripetal acceleration (no reference trajectory)
-LAT_LEAD = 0.05              # s: lag of the legs (vertical PD ~33 rad/s) in rolling the torso
+AY_FILTER = 0.05
+LAT_LEAD = 0.05
 
-# =========================================================
-# Yaw / planar trajectory tracking (differential wheel torque)
-# =========================================================
-K_PSI = 1.8       # Nm per rad of heading error (wheel scrub friction needs ~5x the inertia-only value)
-K_OMEGA = 0.45    # Nm per rad/s of yaw-rate error
-K_LAT = 2.0       # rad of heading correction per m of lateral error (through atan)
-MAX_YAW = 2.7     # Nm
-# Wheel scrub while turning makes the yaw stick-slip: without these terms the robot turned in jerks
-# (yaw rate 0.06 -> 0.8 rad/s in 0.1 s) and its real centripetal acceleration, hence the lateral ZMP,
-# no longer followed the planned turn. Coulomb + viscous feedforward from the reference yaw rate
-# (identified in Gazebo for the MPC) and the integral of the heading error.
-YAW_FRICTION = 0.25          # Nm per wheel
-YAW_VISCOUS = 0.10           # Nm per wheel per rad/s
-YAW_FRICTION_SMOOTH = 0.01   # rad/s (acts on the reference only: no chattering)
-YAW_KI = 0.6                 # Nm per wheel per rad s
-YAW_I_MAX = 0.6              # Nm per wheel
-YAW_I_DEADBAND = 0.035       # rad: no integration on small static errors (avoids stick-slip hunting)
+K_PSI = 1.8
+K_OMEGA = 0.45
+K_LAT = 2.0
+MAX_YAW = 2.7
+YAW_FRICTION = 0.25
+YAW_VISCOUS = 0.10
+YAW_FRICTION_SMOOTH = 0.01
+YAW_KI = 0.6
+YAW_I_MAX = 0.6
+YAW_I_DEADBAND = 0.035
 
-# Roll integral on the leg length difference: with 2000 N/m stance legs the load transfer of the turn
-# ate ~80 % of the commanded lean (1.5 of 7.7 mm), and a proportional roll term (2.0) excited a 5 Hz roll
-# mode that shook the lateral ZMP by +-40 mm. Stiffer legs (5000 N/m) and a slow integral instead.
-ROLL_KP = 0.0                # rad per rad of roll error
-ROLL_KI = 5.0                # 1/s
-ROLL_I_MAX = 0.10            # rad
-LAT_FULL_SPEED = 0.10  # m/s of reference speed at which lateral correction is fully active
+ROLL_KP = 0.0
+ROLL_KI = 5.0
+ROLL_I_MAX = 0.10
+LAT_FULL_SPEED = 0.10
 
-# =========================================================
-# Live commands (/rotino/cmd_*, rotino_dashboard): same semantics as the MPC
-# =========================================================
-CMD_TIMEOUT = 0.5            # s without /rotino/cmd_vel -> velocity and turn rate go back to zero
-CMD_V_MAX = 1.5              # m/s
-CMD_W_MAX = 1.5              # rad/s
-CMD_YAW_ACC = 3.0            # rad/s^2 (forward acceleration uses accel_max)
-CMD_HEIGHT_MIN, CMD_HEIGHT_MAX = -0.05, 0.04   # m, offset of the standing height (leg length)
-CMD_HEIGHT_RATE = 0.08       # m/s
-CMD_PUSH_MAX = 6.0           # N s
-CMD_ACC_FILTER = 0.10        # s: the ZMP feedforward of a step in commanded acceleration is smoothed
-YAW_ERROR_MAX = 0.35         # rad: the commanded heading never runs further ahead of the robot
+CMD_TIMEOUT = 0.5
+CMD_V_MAX = 1.5
+CMD_W_MAX = 1.5
+CMD_YAW_ACC = 3.0
+CMD_HEIGHT_MIN, CMD_HEIGHT_MAX = -0.05, 0.04
+CMD_HEIGHT_RATE = 0.08
+CMD_PUSH_MAX = 6.0
+CMD_ACC_FILTER = 0.10
+YAW_ERROR_MAX = 0.35
 
-# =========================================================
-# Jump state machine
-# =========================================================
 STATE_BALANCE = 'BALANCE'
 STATE_PRELOAD = 'PRELOAD'
 STATE_THRUST = 'THRUST'
@@ -136,9 +87,8 @@ STATE_RECOVERY = 'RECOVERY'
 STATE_SETTLE = 'SETTLE'
 JUMP_ACTIVE_STATES = (STATE_PRELOAD, STATE_THRUST, STATE_FLIGHT, STATE_LANDING, STATE_RECOVERY)
 POST_LANDING_STATES = (STATE_LANDING, STATE_RECOVERY, STATE_SETTLE)
-# share of the capture-point correction per phase (the old per-phase position gains)
 OUTER_SCALE = {STATE_PRELOAD: 0.5, STATE_THRUST: 0.1, STATE_LANDING: 0.3, STATE_RECOVERY: 0.5}
-FLIGHT_WHEEL_DAMPING = 0.05  # Nm per rad/s
+FLIGHT_WHEEL_DAMPING = 0.05
 
 JUMP_ONCE = True
 T_PRELOAD = 0.80
@@ -153,7 +103,6 @@ F_CONTACT_OFF_MIN = 1.5
 F_CONTACT_ON_MIN = 6.0
 CONTACT_LOSS_DEBOUNCE = 0.004
 CONTACT_GAIN_DEBOUNCE = 0.012
-# The gz contact sensor only publishes while touching; older messages mean "no contact".
 CONTACT_STALE_TIME = 0.006
 TAKEOFF_VZ_MIN = 0.08
 
@@ -192,8 +141,8 @@ PARAMS = {
     'height_enable': False, 'height_amplitude': 0.03, 'height_period': 2.2,
     'planar_enable': False, 'traj_length': 3.0, 'traj_lateral': 0.6, 'traj_duration': 12.0,
     'push_enable': False, 'push_time': 4.0, 'push_impulse': 2.7,
-    'wait_start': False,    # hold the scripted motions until /rotino/cmd_start
-    'zmp_lateral': False,   # lean into turns: off, the cylindrical wheels flip contact edge (docs/PID_ZMP.md)
+    'wait_start': False,
+    'zmp_lateral': False,
 }
 
 
@@ -264,7 +213,6 @@ class BalanceJumpController(Node):
         self.upper_weight = self.wbr.p.m_b * G
         self.f_contact_off = max(F_CONTACT_OFF_MIN, F_CONTACT_OFF_RATIO * self.robot_weight)
         self.f_contact_on = max(F_CONTACT_ON_MIN, F_CONTACT_ON_RATIO * self.robot_weight)
-        # hip-axle vertical distance of the XML standing pose (all joints 0)
         self.leg_length0 = float(-self.wbr.leg_fk(0.0, 0.0)[0][1])
 
         self.get_logger().info(
@@ -279,18 +227,10 @@ class BalanceJumpController(Node):
         self.release_pub = self.create_publisher(Empty, '/rotino/release', 10)
         self.state_pub = self.create_publisher(String, '/rotino/jump_state', 10)
         self.wrench_pub = self.create_publisher(EntityWrench, '/world/rotino_world/wrench', 10)
-        # [t, theta, theta_dot, x, xdot, wheel_u, com_z, com_z_vel, Fn_total, min_wheel_gap, loaded]
         self.debug_pub = self.create_publisher(Float64MultiArray, '/rotino/debug', 10)
-        # same layout as the MPC, so that the benchmark logger records references and errors:
-        # [t, s, s_ref, theta, theta_ref, yaw, yaw_ref, s_dot, s_dot_ref, z, z_ref, s_des, F_z, tau_l, tau_r,
-        #  l, tau_hip_l, tau_knee_l]
         self.wbr_pub = self.create_publisher(Float64MultiArray, '/rotino/wbr_state', 10)
-        # [t, zmp_des, zmp, xi_err, acc_ref, a_y, lean_cmd, dz, y_zmp, margin, e_long] (m, m/s^2, rad):
-        # longitudinal ZMP ahead of the CoM (desired / contact), lateral ZMP measured by the multibody estimator
         self.zmp_pub = self.create_publisher(Float64MultiArray, '/rotino/zmp_ctrl', 10)
-        # [t, x_ref, y_ref, heading_ref, x, y, heading, along_err, lateral_err, yaw_u] (world frame, axle midpoint)
         self.planar_pub = self.create_publisher(Float64MultiArray, '/rotino/planar', 10)
-        # [err_x, err_y]: actual - desired position, world frame x/y (axle midpoint), while following the planar trajectory
         self.tracking_error_pub = self.create_publisher(Float64MultiArray, '/rotino/tracking_error', 10)
 
         self.odom = None
@@ -306,8 +246,6 @@ class BalanceJumpController(Node):
 
         self.create_subscription(Odometry, '/rotino/odom', self._odom_cb, 10)
         self.create_subscription(Imu, '/rotino/imu', self._imu_cb, 1)
-        # The contact sensor publishes every physics step (~2 kHz): with a deeper queue the node handled
-        # messages up to 5 ms old, past CONTACT_STALE_TIME, and flagged the robot airborne ~30 % of the time.
         self.create_subscription(Contacts, '/rotino/left_wheel_contact',
                                  lambda msg: self._contact_cb(msg, 'left'), 1)
         self.create_subscription(Contacts, '/rotino/right_wheel_contact',
@@ -317,13 +255,11 @@ class BalanceJumpController(Node):
         self.create_subscription(Float64, '/rotino/cmd_height', self._cmd_height_cb, 10)
         self.create_subscription(Empty, '/rotino/cmd_jump', self._cmd_jump_cb, 10)
         self.create_subscription(Float64, '/rotino/cmd_push', self._cmd_push_cb, 10)
-        # live commands: once one arrives the scripted motion profiles are replaced by the teleop reference
         self.teleop = False
         self.teleop_ready = False
         self.cmd_v = self.cmd_w = self.cmd_height = 0.0
         self.cmd_wall = -math.inf
         self.jump_request = False
-        # wait_start: the scripted motions stay on hold until a message on /rotino/cmd_start
         self.create_subscription(Empty, '/rotino/cmd_start', self._cmd_start_cb, 10)
         self.motion_start = math.inf if self.cfg['wait_start'] else MOTION_START_TIME
         self.start_request = False
@@ -335,9 +271,6 @@ class BalanceJumpController(Node):
         self._init_control_state()
         self.get_logger().info('Waiting for /joint_states and /rotino/odom ...')
 
-    # -----------------------------------------------------------------
-    # State
-    # -----------------------------------------------------------------
     def _init_control_state(self):
         self.jump_state = STATE_BALANCE
         self.jump_done = False
@@ -412,9 +345,6 @@ class BalanceJumpController(Node):
         self.state_t0 = t
         self.state_pub.publish(String(data=state))
 
-    # -----------------------------------------------------------------
-    # Callbacks
-    # -----------------------------------------------------------------
     def _odom_cb(self, msg):
         key = stamp_to_ns(msg.header.stamp)
         self.latest_odom = msg
@@ -439,7 +369,6 @@ class BalanceJumpController(Node):
         if not ground_contact:
             return
         if not has_wrench:
-            # Physics engine did not report forces: treat a touching wheel as carrying half the weight.
             normal_force = 0.5 * self.robot_weight
             if not self.warned_no_wrench:
                 self.warned_no_wrench = True
@@ -456,8 +385,6 @@ class BalanceJumpController(Node):
         self._try_control(key, from_joint_state=True)
 
     def _try_control(self, key, from_joint_state):
-        # Joint states and odometry arrive through different transports: only pair samples of the same
-        # sim step, otherwise the torso pose lags the joints by a step and the COM lean rate gets noisy.
         for buffer in (self.joint_state_buffer, self.odom_buffer):
             if len(buffer) > SYNC_BUFFER_SIZE:
                 del buffer[min(buffer)]
@@ -468,8 +395,6 @@ class BalanceJumpController(Node):
                         'frequency must equal the controller_manager update_rate. '
                         f'JS buffer: {len(self.joint_state_buffer)}, Odom buffer: {len(self.odom_buffer)}')
         if key not in self.joint_state_buffer or key not in self.odom_buffer:
-            # Fallback: stamps never coincide. Step only on the ground-truth odometry (500 Hz) so each pose is
-            # processed once with its exact stamp, paired with the newest joint state.
             if from_joint_state:
                 return
             if self.latest_joint_state is not None and self.latest_odom is not None:
@@ -481,7 +406,6 @@ class BalanceJumpController(Node):
             else:
                 return
         else:
-            # Perfect sync
             msg = self.joint_state_buffer.pop(key)
             self.odom = self.odom_buffer.pop(key)
             for buffer in (self.joint_state_buffer, self.odom_buffer):
@@ -507,17 +431,8 @@ class BalanceJumpController(Node):
         else:
             self._control_step(t_abs, dt, q, qd)
 
-    # -----------------------------------------------------------------
-    # Actuation
-    # -----------------------------------------------------------------
     def _publish_legs(self, targets, q, qd, kp, kd, support):
-        """Cartesian PD of each wheel centre in the hip frame, sent as joint torques.
-
-        targets: ((x_L, z_L), (x_R, z_R)) wheel centre w.r.t. the hip in base_link; support: vertical force
-        each leg carries as feedforward [N] (weight share in stance, 0 in flight). Joint order of
-        leg_effort_controller: [hip_L, hip_R, knee_L, knee_R]. The feedforward also cancels the URDF joint
-        damping, as the MPC does.
-        """
+        """Cartesian PD of each wheel centre in the hip frame, sent as joint torques."""
         up_b = self._base_pose()[1].T @ np.array([0.0, 0.0, 1.0])
         f_ff = -support * np.array([up_b[0], up_b[2]])
         taus = []
@@ -575,9 +490,6 @@ class BalanceJumpController(Node):
         msg.wrench.force.y = float(self.push_force * heading[1])
         self.wrench_pub.publish(msg)
 
-    # -----------------------------------------------------------------
-    # References
-    # -----------------------------------------------------------------
     def _path(self, times):
         """Planned contact (= longitudinal ZMP) path along the heading: (s, s_dot) arrays, or None."""
         c = self.cfg
@@ -605,9 +517,6 @@ class BalanceJumpController(Node):
             return self.leg_length0 + c['height_amplitude'] * math.sin(2.0 * math.pi * th / c['height_period'])
         return self.leg_length0
 
-    # -----------------------------------------------------------------
-    # Live commands
-    # -----------------------------------------------------------------
     def _start_teleop(self):
         if not self.teleop:
             self.teleop = True
@@ -617,8 +526,7 @@ class BalanceJumpController(Node):
         self.start_request = True
 
     def _update_start(self, t):
-        """wait_start: the scripted motions begin START_LEAD after the start command (never before the
-        usual MOTION_START_TIME, if the command came during the release)."""
+        """wait_start: the scripted motions begin START_LEAD after the start command."""
         if self.start_request and math.isinf(self.motion_start):
             self.motion_start = max(t + START_LEAD, MOTION_START_TIME)
             self.get_logger().info(f'Start command: the motion begins at t={self.motion_start:.2f} s')
@@ -647,9 +555,9 @@ class BalanceJumpController(Node):
         if not self.teleop:
             return
         if self.jump_state != STATE_BALANCE:
-            self.teleop_ready = False                  # restart from where the robot lands
+            self.teleop_ready = False
             return
-        if not self.teleop_ready:                      # bumpless takeover
+        if not self.teleop_ready:
             self.tele_s, self.yaw_hold = x, yaw
             self.tele_v = self.tele_a = self.tele_w = 0.0
             self.teleop_ready = True
@@ -691,7 +599,6 @@ class BalanceJumpController(Node):
         along_err = float(np.dot(err, tangent))
         lateral_err = float(np.dot(err, normal))
 
-        # A differential-drive robot can only cancel lateral error while moving: fade the correction out near standstill.
         yaw_cmd = yaw_ref - math.atan(K_LAT * lateral_err) * min(1.0, abs(v_ref) / LAT_FULL_SPEED)
         yaw_u = self._yaw_control(dt, wrap_angle(yaw_cmd - yaw), yaw_rate_ref, yaw_rate)
 
@@ -712,9 +619,7 @@ class BalanceJumpController(Node):
         return traj._ddy(x) / (1.0 + dy * dy) ** 1.5 * v * v
 
     def _lateral_shift_ref(self, t, dt, h, forward_speed, yaw_rate):
-        """CoM shift to the left that keeps the lateral ZMP centred (and the leftward acceleration it
-        answers): LIPM preview of h a_y / g along the planned turn, or the measured v * yaw_rate
-        (filtered, causal) when there is no trajectory."""
+        """CoM shift to the left that keeps the lateral ZMP centred, and the leftward acceleration it answers."""
         a = dt / (AY_FILTER + dt)
         self.a_y_meas += a * (forward_speed * yaw_rate - self.a_y_meas)
         if self.planar_enable and not self.teleop:
@@ -732,9 +637,6 @@ class BalanceJumpController(Node):
         stamp, force = self.contact[side]
         return force if t_abs - stamp <= CONTACT_STALE_TIME else 0.0
 
-    # -----------------------------------------------------------------
-    # Main control step (one MuJoCo loop iteration)
-    # -----------------------------------------------------------------
     def _control_step(self, t_abs, dt, q, qd):
         t = t_abs - self.t_release
         if t < RELEASE_REPEAT_TIME:
@@ -746,13 +648,11 @@ class BalanceJumpController(Node):
         wl = frames[LEFT_WHEEL_LINK][1]
         wr = frames[RIGHT_WHEEL_LINK][1]
 
-        # ---------------- measured ZMP (multibody, 25 ms behind) ----------------
         o = self.odom.pose.pose.orientation
         zmp_now = self.zmp_est.update(t_abs, base_pos, (o.x, o.y, o.z, o.w), q)
         if zmp_now is not None:
             self.zmp_meas = zmp_now
 
-        # ---------------- vertical CoM velocity ----------------
         com_z = float(com[2])
         if self.prev_com_z is None:
             self.prev_com_z = com_z
@@ -764,7 +664,6 @@ class BalanceJumpController(Node):
         if self.jump_state == STATE_PRELOAD:
             self.preload_min_com_z = min(self.preload_min_com_z, com_z)
 
-        # ---------------- wheel clearance ----------------
         min_wheel_gap = min(float(wl[2]), float(wr[2])) - WHEEL_RADIUS
         gap_rel = 0.0 if self.wheel_gap_ref is None else min_wheel_gap - self.wheel_gap_ref
         if self.jump_state in JUMP_ACTIVE_STATES:
@@ -773,22 +672,19 @@ class BalanceJumpController(Node):
         wheel_clear_air = (min_wheel_gap > WHEEL_CLEARANCE_TAKEOFF_ABS
                            and gap_rel > WHEEL_CLEARANCE_TAKEOFF_REL)
 
-        # ---------------- longitudinal ZMP offset: CoM ahead of the wheel axle ----------------
         wheel_mid = 0.5 * (wl + wr)
         heading = base_rot[:, 0].copy()
         heading[2] = 0.0
         heading /= max(np.linalg.norm(heading), 1e-9)
         s_c = float(np.dot(com - wheel_mid, heading))
         dz = float(com[2] - wheel_mid[2])
-        theta = math.atan2(s_c, max(dz, 1e-6))          # CoM lean from the vertical, + forward (as the MPC)
+        theta = math.atan2(s_c, max(dz, 1e-6))
         if self.prev_s is None:
             self.prev_s, self.prev_theta = s_c, theta
-        # Ideal ground-truth state: exact derivatives on simulator stamps, no filtering.
         s_c_dot = (s_c - self.prev_s) / dt
         theta_dot = (theta - self.prev_theta) / dt
         self.prev_s, self.prev_theta = s_c, theta
 
-        # ---------------- axle travel along the heading, yaw ----------------
         yaw = math.atan2(heading[1], heading[0])
         axle_xy = wheel_mid[:2].copy()
         if self.yaw0 is None:
@@ -805,7 +701,6 @@ class BalanceJumpController(Node):
         yaw_rate = wrap_angle(yaw - self.prev_yaw) / dt
         self.prev_yaw = yaw
 
-        # ---------------- contact force hysteresis ----------------
         fn_total = self._contact_force('left', t_abs) + self._contact_force('right', t_abs)
         if self.jump_state == STATE_THRUST:
             self.thrust_force_sum += fn_total
@@ -828,7 +723,6 @@ class BalanceJumpController(Node):
         if self.jump_state == STATE_FLIGHT:
             self.peak_air_com_z = max(self.peak_air_com_z, com_z)
 
-        # ---------------- references ----------------
         self._update_start(t)
         self._update_teleop(dt, x, yaw)
         teleop = self.teleop_ready and self.jump_state == STATE_BALANCE
@@ -837,11 +731,9 @@ class BalanceJumpController(Node):
         if self.jump_state != STATE_BALANCE or self.jump_done:
             x_ref = self.x_ref_active
         path = self._path if scripted else None
-        h = com_z                                       # CoM height above the (flat) ground
+        h = com_z
         omega = math.sqrt(G / max(h, 0.03))
         if teleop:
-            # live commands: the future is unknown, so no preview; the ZMP feedforward uses the current
-            # (rate-limited) acceleration of the reference
             x_ref, v_ref, acc_ref = self.tele_s, self.tele_v, self.tele_a
         elif path is not None and path(np.array([t])) is not None:
             (x_ref,), (v_ref,) = path(np.array([t]))
@@ -860,7 +752,6 @@ class BalanceJumpController(Node):
             self.yaw_i = 0.0
             yaw_u = clamp(K_PSI * wrap_angle(self.yaw_hold - yaw) - K_OMEGA * yaw_rate, -MAX_YAW, MAX_YAW)
 
-        # ---------------- ZMP balance on the wheels ----------------
         info = {'zmp_des': -s_c, 'zmp': -s_c, 'xi_err': 0.0, 's_des': s_c}
         if self.jump_state == STATE_FLIGHT:
             common = 0.0
@@ -878,7 +769,6 @@ class BalanceJumpController(Node):
             wheel_sat = info['saturated'] or abs(common) >= 0.98 * (WHEEL_TORQUE_MAX - abs(diff))
         wheel_u = common / WHEEL_GEAR
 
-        # ---------------- lateral ZMP: lean into the turn ----------------
         lean_cmd = leg_dz = a_y = 0.0
         y_zmp = None
         if self.zmp_meas is not None and self.zmp_meas['fz'] > 0.2 * self.robot_weight:
@@ -886,7 +776,6 @@ class BalanceJumpController(Node):
         if self.cfg['zmp_lateral'] and self.jump_state == STATE_BALANCE and not airborne:
             shift, a_y = self._lateral_shift_ref(t, dt, h, forward_speed, yaw_rate)
             lean_cmd, leg_dz, _ = self.lateral.step(dt, h, shift, y_zmp)
-            # roll PI: lean = left side down = negative roll about the heading
             lean_meas = -math.atan2(base_rot[2, 1], base_rot[2, 2])
             roll_err = lean_cmd - lean_meas
             self.roll_i = clamp(self.roll_i + ROLL_KI * roll_err * dt, -ROLL_I_MAX, ROLL_I_MAX)
@@ -895,7 +784,6 @@ class BalanceJumpController(Node):
             self.lateral.reset()
             self.roll_i = 0.0
 
-        # ---------------- settling check ----------------
         if self.landing_time is not None and self.jump_state in (STATE_RECOVERY, STATE_SETTLE, STATE_BALANCE):
             settled_now = (self.loaded_state
                            and abs(theta) < SETTLE_LEAN_ERR
@@ -907,7 +795,6 @@ class BalanceJumpController(Node):
         else:
             self.settle_timer = 0.0
 
-        # ---------------- jump state machine ----------------
         stable_for_jump = (abs(theta) < math.radians(2.5)
                            and abs(xdot) < 0.08
                            and self.loaded_state)
@@ -917,7 +804,7 @@ class BalanceJumpController(Node):
             scripted_jump = self.jump_enable and not self.jump_done and t > self.jump_start_time
             if (scripted_jump or self.jump_request) and stable_for_jump:
                 self.jump_request = False
-                self.x_ref_active = x                   # jump where the robot stands
+                self.x_ref_active = x
                 self._set_state(STATE_PRELOAD, t)
                 self._reset_jump_metrics(com_z, min_wheel_gap)
                 self.wheel_gap_ref = min_wheel_gap
@@ -993,9 +880,8 @@ class BalanceJumpController(Node):
             if self.settle_time is not None or settle_timeout:
                 self._finish_jump(t)
 
-        # ---------------- leg targets ----------------
         elapsed = t - self.state_t0
-        stand = (0.0, 0.0, 0.0, 0.0)  # hip_L, hip_R, knee_L, knee_R of the XML standing pose
+        stand = (0.0, 0.0, 0.0, 0.0)
         preload = (HIP_PRELOAD_DELTA, HIP_PRELOAD_DELTA, KNEE_PRELOAD_DELTA, KNEE_PRELOAD_DELTA)
         thrust = (HIP_THRUST_DELTA, HIP_THRUST_DELTA, KNEE_THRUST_DELTA, KNEE_THRUST_DELTA)
         land = (HIP_LAND_DELTA, HIP_LAND_DELTA, KNEE_LAND_DELTA, KNEE_LAND_DELTA)
@@ -1029,7 +915,6 @@ class BalanceJumpController(Node):
             else:
                 kp, kd, support = LEG_KP_JUMP, LEG_KD_JUMP, 0.5 * self.upper_weight
         else:
-            # standing: wheel under the hip, legs lengthened/shortened to lean into the turn
             z0 = self._leg_length_ref(t)
             feet = (np.array([0.0, -clamp(z0 - 0.5 * leg_dz, LEG_LENGTH_MIN, LEG_LENGTH_MAX)]),
                     np.array([0.0, -clamp(z0 + 0.5 * leg_dz, LEG_LENGTH_MIN, LEG_LENGTH_MAX)]))
@@ -1046,7 +931,6 @@ class BalanceJumpController(Node):
             self.max_abs_xdot_after_landing = max(self.max_abs_xdot_after_landing, abs(xdot))
             self.max_abs_theta_dot_after_landing = max(self.max_abs_theta_dot_after_landing, abs(theta_dot))
 
-        # ---------------- telemetry ----------------
         self.debug_pub.publish(Float64MultiArray(data=[
             t, theta, theta_dot, x, xdot, wheel_u, com_z, com_z_vel_raw, fn_total, min_wheel_gap,
             float(self.loaded_state)]))

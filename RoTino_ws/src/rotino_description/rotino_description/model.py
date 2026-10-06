@@ -1,13 +1,4 @@
-"""
-Decoupled WBR model of Cui et al., "Modeling and Control of a Wheeled Biped Robot",
-Micromachines 2022, 13, 747, with every parameter of its Table 1 computed from the RoTino URDF.
-
-  - VL-WIP (Sec. 3.2, eqs. 4-5, 12-14): wheels + variable-length pendulum carrying the upper body m_b
-  - equivalent centroid (Sec. 3.1, eqs. 2-3): l, theta of the upper-body CoM in the axle frame
-  - lumped-mass upper body (Sec. 3.3, eq. 9) for the MPC
-
-Run `ros2 run rotino_description wbr_model` to print the parameter table.
-"""
+"""Decoupled WBR model of Cui et al. (Micromachines 2022, 13, 747), parameters computed from the RoTino URDF."""
 
 import math
 import subprocess
@@ -27,25 +18,25 @@ TORSO_LINKS = ('base_link', 'ballast_link')
 
 @dataclass
 class WBRParams:
-    m_w: float      # mass of one wheel [kg]
-    I_w: float      # wheel inertia about its spin axis [kg m^2]
-    r: float        # wheel radius [m]
-    d: float        # distance between the wheels [m]
-    m_b: float      # upper body mass = total - 2 m_w [kg]
-    m_1: float      # shank mass (one leg) [kg]
-    m_2: float      # thigh mass (one leg) [kg]
-    m_3: float      # torso mass (base + ballast) [kg]
-    l_1: float      # shank length, knee -> wheel axle [m]
-    l_2: float      # thigh length, hip -> knee [m]
-    l_3: float      # torso height (box) [m]
-    torso_com: np.ndarray  # torso CoM in the hip frame (base_link) [m]
-    L_max: float    # geometric leg length l_1 + l_2 [m]
-    mu: float       # wheel/ground friction coefficient
-    wheel_torque_max: float  # [Nm]
-    leg_torque_max: float    # [Nm]
-    hip_limit: float         # [rad]
-    knee_limit: float        # [rad]
-    leg_damping: float       # hip/knee viscous damping [Nm s/rad]
+    m_w: float
+    I_w: float
+    r: float
+    d: float
+    m_b: float
+    m_1: float
+    m_2: float
+    m_3: float
+    l_1: float
+    l_2: float
+    l_3: float
+    torso_com: np.ndarray
+    L_max: float
+    mu: float
+    wheel_torque_max: float
+    leg_torque_max: float
+    hip_limit: float
+    knee_limit: float
+    leg_damping: float
 
 
 def _joint(robot, name):
@@ -117,7 +108,6 @@ class WBRModel:
             leg_damping=float(hip.dynamics.damping) if hip.dynamics is not None else 0.0,
         )
 
-    # ------------------------------------------------------------------
     def _link_com(self, frames, name):
         link = _link(self.robot, name)
         origin = link.inertial.origin
@@ -149,11 +139,7 @@ class WBRModel:
         return {'left_hip': hip, 'right_hip': hip, 'left_knee': knee, 'right_knee': knee}
 
     def equivalent_centroid(self, hip, knee, pitch=0.0):
-        """Eqs. (2)-(3): upper-body CoM in the axle frame -> (S_C, Z_C, l, theta, I_y, I_z, hip height).
-
-        I_y / I_z are the upper-body inertias about its own CoM (pitch / yaw axes); hip height is
-        the vertical hip-to-axle distance z_b.
-        """
+        """Eqs. (2)-(3): upper-body CoM in the axle frame -> (S_C, Z_C, l, theta, I_y, I_z, hip height)."""
         R = rpy_to_matrix(0.0, pitch, 0.0)
         frames = self.kin.link_frames(np.zeros(3), R, self.leg_joints(hip, knee))
         axle = 0.5 * (frames[LEFT_WHEEL_LINK][1] + frames[RIGHT_WHEEL_LINK][1])
@@ -204,7 +190,6 @@ class WBRModel:
         B = np.zeros((6, 2))
         B[3] = [c['b1'], c['b1']]
         B[4] = [c['b2'], c['b2']]
-        # Left wheel on +y (REP 103): a forward left torque turns the robot clockwise, the opposite of Fig. 2a.
         B[5] = [-c['b3'], c['b3']]
         return A, B
 

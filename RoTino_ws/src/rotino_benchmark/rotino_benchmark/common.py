@@ -7,7 +7,6 @@ import os
 LAWS = ('pid', 'mpc')
 LABELS = {'pid': 'PID', 'mpc': 'MPC'}
 COLORS = {'pid': '#d62728', 'mpc': '#1f77b4'}
-# commanded actuation torques in the log: wheels, hips, knees
 WHEEL_TORQUE_COLUMNS = ('wheel_L_torque_cmd', 'wheel_R_torque_cmd')
 TORQUE_COLUMNS = WHEEL_TORQUE_COLUMNS + ('hip_L_torque_cmd', 'hip_R_torque_cmd',
                                          'knee_L_torque_cmd', 'knee_R_torque_cmd')

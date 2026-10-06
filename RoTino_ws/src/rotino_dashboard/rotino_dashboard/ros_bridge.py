@@ -1,8 +1,4 @@
-"""ROS side of the dashboard.
-
-The subscriptions run in a separate process (no GIL contention with the Qt thread) and write into
-shared-memory ring buffers; the GUI process only reads the last time window of each stream.
-"""
+"""ROS side of the dashboard: subscriptions in a separate process, shared-memory ring buffers to the GUI."""
 
 import math
 import multiprocessing as mp
@@ -16,31 +12,23 @@ import numpy as np
 
 JOINTS = ['left_hip', 'right_hip', 'left_knee', 'right_knee', 'left_wheel_joint', 'right_wheel_joint']
 CONTACT_STALE_TIME = 0.02
-MIN_JACOBIAN_DET = 2e-3     # m^2; nominal pose ~8e-3
+MIN_JACOBIAN_DET = 2e-3
 BUFFER_SECONDS = 60.0
 RATE = 500
 
-# /rotino/debug:        [t, theta, theta_dot, s, s_dot, wheel_u, com_z, com_z_vel, Fn_total, min_wheel_gap, loaded]
-# /rotino/wbr_state:    [t, s, s_ref, theta, theta_ref, phi, phi_ref, s_dot, s_dot_ref, z, z_ref, delta_s, F_z,
-#                        tau_l, tau_r, l, tau_hip_l, tau_knee_l]
-# /rotino/estimation_error: [ex, ey, ez, evx, evy, evz]
-# zmp (computed here, rotino_description.zmp, world frame unless noted):
-#   [zmp_x, zmp_y, lipm_x, lipm_y, com_x, com_y, com_z, cL_x, cL_y, cR_x, cR_y,
-#    y_rel (+1 = on the left wheel), lateral [m], e_long [m], margin [m], Fn_L, Fn_R]
 STREAMS = {
     'debug': 11,
     'wbr': 18,
     'est': 6,
-    'joints': 12,       # 6 positions + 6 velocities, JOINTS order
-    'contact': 2,       # 1 = wheel touching the ground (left, right)
+    'joints': 12,
+    'contact': 2,
     'wheel_cmd': 2,
-    'leg_cmd': 4,       # hip_L, hip_R, knee_L, knee_R
-    'leg_force': 4,     # force pushing the body, world frame: Fx_L, Fz_L, Fx_R, Fz_R [N]  (F = -J^-T tau)
-    'odom': 5,          # x, y, z, pitch, yaw
+    'leg_cmd': 4,
+    'leg_force': 4,
+    'odom': 5,
     'zmp': 17,
 }
 NAMES = list(STREAMS)
-# status vector: sim time, wall time of that sim time, transport delay, counts..., wall_last...
 ST_SIM, ST_WALL, ST_DELAY, ST_COUNT0 = 0, 1, 2, 3
 ST_WALL0 = ST_COUNT0 + len(NAMES)
 
@@ -53,10 +41,9 @@ class SharedRing:
         size = self.capacity * (cols + 1) * 8
         self.shm = shared_memory.SharedMemory(name=name, create=create, size=size)
         self.data = np.ndarray((self.capacity, cols + 1), dtype=np.float64, buffer=self.shm.buf)
-        self.meta = meta          # int64 array: [head, size] per stream
+        self.meta = meta
         self.i = index
 
-    # writer ----------------------------------------------------------
     def append(self, t, values):
         head = int(self.meta[2 * self.i])
         row = self.data[head]
@@ -68,7 +55,6 @@ class SharedRing:
     def clear(self):
         self.meta[2 * self.i + 1] = 0
 
-    # reader ----------------------------------------------------------
     def _segments(self):
         head, size = int(self.meta[2 * self.i]), int(self.meta[2 * self.i + 1])
         if size == 0:
@@ -142,7 +128,6 @@ class SharedState:
                 shm.unlink()
 
 
-# ============================================================================ ROS process
 def _contact_touching(msg):
     return any('ground' in c.collision1.name or 'ground' in c.collision2.name for c in msg.contacts)
 
@@ -175,7 +160,7 @@ def run_ros_process(prefix, commands, events):
         buf = shared.buffers[name]
         last = buf.last()
         if last is not None and t < last[0] - 1.0:
-            buf.clear()   # simulation restarted: time went backwards
+            buf.clear()
         buf.append(t, values)
         i = NAMES.index(name)
         st[ST_COUNT0 + i] += 1
@@ -195,7 +180,7 @@ def run_ros_process(prefix, commands, events):
         out = []
         for side, (tau_hip, tau_knee) in enumerate(((msg.data[0], msg.data[2]), (msg.data[1], msg.data[3]))):
             _, J = m.leg_fk(q[side], q[2 + side])
-            if abs(np.linalg.det(J)) < MIN_JACOBIAN_DET:   # leg almost straight: force not observable
+            if abs(np.linalg.det(J)) < MIN_JACOBIAN_DET:
                 F = np.array([np.nan, np.nan])
             else:
                 F = -np.linalg.solve(J.T, np.array([tau_hip, tau_knee]))
@@ -299,7 +284,7 @@ def run_ros_process(prefix, commands, events):
                     was_active = teleop['active']
                     teleop.update(active=cmd[1], v=cmd[2], w=cmd[3], h=cmd[4])
                     if was_active and not cmd[1]:
-                        cmd_vel_pub.publish(Twist())   # stop before handing back
+                        cmd_vel_pub.publish(Twist())
                     publish_teleop()
                 elif cmd[0] == 'jump':
                     cmd_jump_pub.publish(Empty())
@@ -310,9 +295,9 @@ def run_ros_process(prefix, commands, events):
 
     wall = rclpy.clock.Clock()
     node.create_timer(0.02, poll_commands, clock=wall)
-    node.create_timer(0.05, publish_teleop, clock=wall)   # 20 Hz keep-alive (controller timeout 0.5 s)
+    node.create_timer(0.05, publish_teleop, clock=wall)
     try:
-        while running[0] and rclpy.ok() and os.getppid() == parent:   # exit with the GUI, even if it was killed
+        while running[0] and rclpy.ok() and os.getppid() == parent:
             rclpy.spin_once(node, timeout_sec=0.1)
     except KeyboardInterrupt:
         pass
@@ -323,7 +308,6 @@ def run_ros_process(prefix, commands, events):
         shared.close()
 
 
-# ============================================================================ GUI-side handle
 class RosBridge:
     """Starts the ROS process and exposes the shared data to the GUI."""
 

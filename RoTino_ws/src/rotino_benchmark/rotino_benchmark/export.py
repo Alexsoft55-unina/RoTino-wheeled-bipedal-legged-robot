@@ -1,23 +1,4 @@
-"""CSVs of the error, reference, state and actuator signals of a scenario, split by theme.
-
-    ros2 run rotino_benchmark export -- <scenario_dir>     # -> <scenario_dir>/dati/
-    ros2 run rotino_benchmark export -- <suite_dir>        # every scenario of the suite
-
-compare, campaign and suite call it after the comparison. It only reads the logs, when the simulation is over.
-One row per control step, the same rows in every file of a law, six significant digits:
-
-    inseguimento_<law>.csv   states, references and tracking errors (pitch, position, speed, heading, height),
-                             norms of the errors, disturbance forces
-    attuazione_<law>.csv     commanded torques (each joint, common and differential on the wheels), their norms,
-                             joint positions and velocities
-    stato_<law>.csv          ground-truth torso pose and twist, estimator error of the MPC
-    colonne.csv              unit and meaning of every column above
-
-The errors are grouped by unit before taking a norm: angles (pitch and heading) and positions (travel and
-height). A column that a log does not have, or that is NaN from start to end, is left out: the estimator error
-needs a run with --topic-extra, and logs older than this module have no heading or height error, hence no
-error norms either.
-"""
+"""CSVs of the error, reference, state and actuator signals of a scenario, split by theme."""
 
 import argparse
 import csv
@@ -64,7 +45,6 @@ class Log:
         return self.cols[name] if name in self.cols else np.full(self.n, NAN)
 
 
-# ---------------------------------------------------------------------------- derived signals
 def _norm(*signals):
     """Euclidean norm of the signals at every sample (NaN where one of them is missing)."""
     return np.sqrt(sum(s ** 2 for s in signals))
@@ -80,8 +60,7 @@ def _rpy(d, axis):
 
 
 def _has_height_reference(d):
-    """False for a law that publishes its measured CoM height in the place of the reference (the PID): the
-    error would read as a perfect zero."""
+    """False for a law that publishes its measured CoM height in place of the reference (the PID)."""
     err = d['com_z_axle_err_mm']
     return not (np.isfinite(err).any() and not np.nanmax(np.abs(err)) > 0.0)
 
@@ -90,11 +69,9 @@ def _height(column):
     return lambda d: d[column] if _has_height_reference(d) else np.full(d.n, NAN)
 
 
-# ---------------------------------------------------------------------------- what goes where
 JOINTS = OrderedDict([('hip_L', 'anca sinistra'), ('hip_R', 'anca destra'), ('knee_L', 'ginocchio sinistro'),
                       ('knee_R', 'ginocchio destro'), ('wheel_L', 'ruota sinistra'), ('wheel_R', 'ruota destra')])
 
-# (column, unit, meaning, source): the source is a column of the log (None = the same name) or a function of it
 THEMES = OrderedDict([
     ('inseguimento', [
         ('theta_deg', 'deg', 'inclinazione del CoM dalla verticale, positiva in avanti', None),

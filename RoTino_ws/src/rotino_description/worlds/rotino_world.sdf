@@ -1,8 +1,6 @@
 <?xml version="1.0"?>
 <sdf version="1.8">
   <world name="rotino_world">
-    <!-- 0.5 ms physics keeps the explicit leg-servo damping (kv 14) numerically stable;
-         control and odometry run at 500 Hz, an exact multiple, so their stamps coincide. -->
     <physics name="0_5ms" type="ignored">
       <max_step_size>0.0005</max_step_size>
       <real_time_factor>1.0</real_time_factor>
@@ -14,7 +12,6 @@
     <plugin filename="ignition-gazebo-scene-broadcaster-system" name="ignition::gazebo::systems::SceneBroadcaster"/>
     <plugin filename="ignition-gazebo-imu-system" name="ignition::gazebo::systems::Imu"/>
     <plugin filename="ignition-gazebo-contact-system" name="ignition::gazebo::systems::Contact"/>
-    <!-- /world/rotino_world/wrench: one-step wrench, used for the impact-recovery test -->
     <plugin filename="ignition-gazebo-apply-link-wrench-system" name="ignition::gazebo::systems::ApplyLinkWrench"/>
 
     <light type="directional" name="sun">
@@ -30,8 +27,6 @@
       <link name="link">
         <collision name="collision">
           <geometry><plane><normal>0 0 1</normal><size>40 30</size></plane></geometry>
-          <!-- DART combines friction with min(mu_a, mu_b), MuJoCo with max. Ground mu = 2.2 makes every
-               robot/ground pair match MuJoCo: wheels 2.2, legs/torso 1.8. -->
           <surface>
             <friction><ode><mu>2.2</mu><mu2>2.2</mu2></ode></friction>
           </surface>
@@ -62,9 +57,6 @@
       </link>
     </model>
 
-    <!-- Uneven ground, away from the benchmark paths (all within ~3.5 m of the start): speed bumps ahead, a ramp
-         with a 3 cm plateau behind, a patch of low tiles on the right. Same friction as the ground. The model name
-         contains "ground" because the controllers count as ground contact only collisions with that word. -->
     <model name="ground_uneven">
       <static>true</static>
       <link name="link">
@@ -211,10 +203,6 @@
       </link>
     </model>
 
-    <!-- Static anchor holding the RoTino torso upright at its spawn pose until the balance
-         controller publishes /rotino/release. The anchor must be the joint PARENT: DART moves the
-         child body into the parent's skeleton, so with the robot as parent the anchor would lose
-         its weld to the world and hold nothing. -->
     <model name="rotino_anchor">
       <static>true</static>
       <pose>0 0 0.2439 0 0 0</pose>

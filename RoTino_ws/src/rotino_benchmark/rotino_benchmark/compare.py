@@ -1,12 +1,4 @@
-"""PID versus MPC: metrics of one scenario, or the summary of a whole suite.
-
-    ros2 run rotino_benchmark compare -- <scenario_dir>     # table PID | MPC | diff | better, confronto.md
-    ros2 run rotino_benchmark compare -- <suite_dir>        # every scenario + riepilogo.md / .csv / .png
-
-Classic metrics use only the columns both controllers publish (/rotino/debug, /rotino/wbr_state and the
-commanded torques), so the two laws are scored on exactly the same signals; the ZMP metrics come from the
-multibody reconstruction (zmp_analysis). Results are cached in <scenario_dir>/metriche.json.
-"""
+"""PID versus MPC: metrics of one scenario, or the summary of a whole suite."""
 
 import argparse
 import csv
@@ -20,19 +12,14 @@ from rotino_benchmark.common import (LABELS, LAWS, TORQUE_COLUMNS, WHEEL_TORQUE_
 from rotino_benchmark.scenarios import SCENARIOS
 
 SETTLE_BAND_DEG = 0.5
-# Peak, recovery and recovery energy ignore the release from the anchor: the CoM hangs 1.1 cm ahead of the axle
-# (~4.7 deg) and every law has the same transient, which otherwise was "the peak" of every quiet scenario.
-# Scenario motions start at 2 s, pushes and jumps at 4 s.
 RELEASE_SKIP_S = 1.5
-STEADY_TAIL_S = 3.0      # steady state after a disturbance: mean of the last 3 s of the run
-ZONE_BEFORE_M = 0.05     # platform metrics: from just before each obstacle ...
-ZONE_AFTER_M = 0.6       # ... to 0.6 m after it, so that the response is included but not the start/stop
-DIST_THRESHOLD_N = 1.0   # an impulsive push or a step force above this marks the disturbance onset
-TIE_REL = 0.05            # relative difference under which the two laws are considered equal
+STEADY_TAIL_S = 3.0
+ZONE_BEFORE_M = 0.05
+ZONE_AFTER_M = 0.6
+DIST_THRESHOLD_N = 1.0
+TIE_REL = 0.05
 NAN = float('nan')
 
-# (key, label, format, direction, tie): direction -1 lower is better, +1 higher is better, 0 descriptive
-# only; below `tie` (absolute, in the unit of the metric) the two laws are equal whatever the ratio
 METRICS = [
     ('duration_s', 'durata [s]', '{:.1f}', 0, 0.0),
     ('pitch_rms_deg', 'beccheggio rms a regime [deg]', '{:.3f}', -1, 0.05),
@@ -70,7 +57,6 @@ METRICS = [
 METRIC = {m[0]: m for m in METRICS}
 
 
-# ---------------------------------------------------------------------------- metrics
 def read_csv(path):
     with open(path, newline='') as f:
         rows = list(csv.DictReader(f))
@@ -105,7 +91,6 @@ def metrics(d, zones=()):
         return None
     dur = max(finite(t)) - min(finite(t))
 
-    # steady state: last third of the run
     cut = min(finite(t)) + 2.0 * dur / 3.0
     tail = [v for ti, v in zip(t, th) if not math.isnan(ti) and ti >= cut and not math.isnan(v)]
     rms = math.sqrt(sum(v * v for v in tail) / len(tail)) if tail else NAN
@@ -114,7 +99,6 @@ def metrics(d, zones=()):
     fin = [(ti, v) for ti, v in zip(t, th) if not math.isnan(ti) and not math.isnan(v) and ti >= t0]
     peak = max((abs(v) for _, v in fin), default=NAN)
 
-    # recovery: last instant the pitch was outside the band, measured from the peak onwards
     settle = NAN
     if fin:
         i_peak = max(range(len(fin)), key=lambda i: abs(fin[i][1]))
@@ -128,12 +112,10 @@ def metrics(d, zones=()):
     taus = [0.5 * (a + b) for a, b in zip(d['wheel_L_torque_cmd'], d['wheel_R_torque_cmd'])
             if not (math.isnan(a) or math.isnan(b))]
     tau_rms = math.sqrt(sum(v * v for v in taus) / len(taus)) if taus else NAN
-    # chattering proxy: mean |d(tau)| per sample over the steady tail
     tail_tau = taus[int(len(taus) * 0.66):] if taus else []
     chat = (sum(abs(b - a) for a, b in zip(tail_tau, tail_tau[1:])) / max(len(tail_tau) - 1, 1)
             if len(tail_tau) > 2 else NAN)
 
-    # disturbance recovery energy: integral of tau^2 dt over the response to the pitch peak
     dist_energy = NAN
     if fin and taus:
         i_peak = max(range(len(fin)), key=lambda i: abs(fin[i][1]))
@@ -143,8 +125,6 @@ def metrics(d, zones=()):
         if e_samples:
             dist_energy = sum(e_samples) * 0.002
 
-    # norm of the actuation torques at every sample: the six joints, and the wheels alone (the legs hold
-    # the weight, about 2.6 Nm whatever the law); the peak ignores the release like the other peaks
     tau_norm = norm_series(*(d.get(c, [NAN] * len(t)) for c in TORQUE_COLUMNS))
     wheel_norm = norm_series(*(d[c] for c in WHEEL_TORQUE_COLUMNS))
     tau_norm_peak = max((v for ti, v in zip(t, tau_norm) if not math.isnan(v) and ti >= t0), default=NAN)
@@ -161,7 +141,7 @@ def metrics(d, zones=()):
     v = finite(d['xdot_ms'])
     z = finite(d['com_z_m'])
     s_err = finite(d.get('s_err_m', []))
-    z0 = sorted(z[:250])[len(z[:250]) // 2] if z else NAN          # standing height, first 0.5 s
+    z0 = sorted(z[:250])[len(z[:250]) // 2] if z else NAN
     return {
         'duration_s': dur,
         'pitch_rms_deg': rms,
@@ -189,12 +169,7 @@ def metrics(d, zones=()):
 
 
 def zone_metrics(d, zones):
-    """Pitch, wheel torque and vertical CoM excursion while crossing the obstacles of a platform scenario.
-
-    The windows are in distance travelled (x_m), so the acceleration at the start and the braking at the end
-    of the trapezoid stay out of them; the CoM excursion is measured from the height just before the first
-    obstacle (the two laws publish different CoM heights: whole robot for the PID, upper body for the MPC).
-    """
+    """Pitch, wheel torque and vertical CoM excursion while crossing the obstacles of a platform scenario."""
     out = {'zone_pitch_peak_deg': NAN, 'zone_tau_peak_Nm': NAN, 'zone_com_dev_mm': NAN}
     if not zones:
         return out
@@ -227,13 +202,7 @@ def _median(xs):
 
 
 def disturbance_metrics(d, t_skip):
-    """Steady state after a disturbance and the attitude/torque peaks of the uneven-ground runs.
-
-    settle_ss_s: from the onset of the push or step force, time until the pitch stays within the band
-    around its final value (a held force leaves the robot leaning: the band is not around 0);
-    pitch_ss_deg / pos_err_ss_m: mean pitch and mean |position error| over the last STEADY_TAIL_S;
-    roll_peak_deg / yaw_dev_max_deg: largest deviation from the attitude at the start of the log.
-    """
+    """Steady state after a disturbance and the attitude/torque peaks of the uneven-ground runs."""
     t = d['time_s']
     rows = [i for i, ti in enumerate(t) if not math.isnan(ti)]
     out = {k: NAN for k in ('settle_ss_s', 'pitch_ss_deg', 'pos_err_ss_m', 'roll_peak_deg',
@@ -279,12 +248,11 @@ def zmp_row_metrics(path, result=None):
             d = zmp_analysis.read_log(path)
             result = zmp_analysis.analyse(d) if d is not None else None
         return zmp_analysis.zmp_metrics(result) if result is not None else {}
-    except Exception as exc:   # missing URDF/xacro must not break the classic table
+    except Exception as exc:
         print(f'  ZMP non calcolato per {os.path.basename(path)}: {exc}')
         return {}
 
 
-# ---------------------------------------------------------------------------- scenario
 def _cache_path(run_dir):
     return os.path.join(run_dir, 'metriche.json')
 
@@ -332,7 +300,7 @@ def _fmt(key, v):
 def _diff(key, found):
     a, b = found.get('pid', {}).get(key, NAN), found.get('mpc', {}).get(key, NAN)
     if math.isnan(a) or math.isnan(b) or max(abs(a), abs(b)) < 1e-9 or abs(a - b) <= METRIC[key][4]:
-        return ''                  # below the resolution of the metric a percentage means nothing
+        return ''
     return f'{100.0 * (a - b) / max(abs(b), 1e-9):+.0f} %' if abs(b) > 1e-9 else ''
 
 
@@ -389,7 +357,6 @@ def write_scenario_report(run_dir, name, found):
         f.write('\n'.join(lines) + '\n')
 
 
-# ---------------------------------------------------------------------------- suite
 def scenario_name(run_dir):
     """Name recorded in scenario.json by campaign/suite, else the directory name."""
     try:
@@ -436,7 +403,7 @@ def write_suite_report(suite_dir, results):
             f'Su {total} metriche chiave: **PID migliore in {score["pid"]}**, **MPC migliore in {score["mpc"]}**, '
             f'pari in {score["="]} (differenza sotto il {TIE_REL * 100:.0f} % o sotto la risoluzione della metrica).', '',
             '![Riepilogo](riepilogo.png)', '']
-    lines[4:4] = head                                  # after the title and the introduction
+    lines[4:4] = head
     with open(os.path.join(suite_dir, 'riepilogo.md'), 'w') as f:
         f.write('\n'.join(lines) + '\n')
     with open(os.path.join(suite_dir, 'riepilogo.csv'), 'w', newline='') as f:
@@ -464,8 +431,7 @@ def analyse_suite(suite_dir, recompute=False, plots=True):
 
 
 def analyse_scenario(run_dir, recompute=False, plots=True):
-    """Metrics (+ ZMP), plots, confronto.md and the CSVs of dati/ (export) of one scenario directory; returns
-    {law: metrics}."""
+    """Metrics (+ ZMP), plots, confronto.md and dati/ CSVs of one scenario directory; returns {law: metrics}."""
     name = scenario_name(run_dir)
     zmp_results = None
     need = recompute or not os.path.exists(_cache_path(run_dir))

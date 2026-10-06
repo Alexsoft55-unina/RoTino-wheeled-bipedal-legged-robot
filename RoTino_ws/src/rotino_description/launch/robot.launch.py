@@ -1,9 +1,4 @@
-"""Brings up RoTino in Gazebo and starts whichever control law was asked for.
-
-Every control package includes this file and passes its own controller_pkg / controller_exe, so the
-simulation, the robot and the scenario arguments are identical across control laws and only the
-controller node changes. That is what makes the benchmark comparison meaningful.
-"""
+"""Brings up RoTino in Gazebo and starts whichever control law was asked for."""
 
 import os
 
@@ -18,11 +13,9 @@ from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
 SPAWN_HEIGHT = 0.2439
-# The Fortress contact system ignores <topic> and publishes on the scoped sensor topic.
 LEFT_CONTACT_GZ_TOPIC = '/world/rotino_world/model/rotino/link/left_wheel_link/sensor/left_wheel_contact/contact'
 RIGHT_CONTACT_GZ_TOPIC = '/world/rotino_world/model/rotino/link/right_wheel_link/sensor/right_wheel_contact/contact'
 
-# (name, default, type, description) forwarded as parameters to the controller node
 SCENARIO_ARGS = [
     ('jump_enable', 'false', bool, 'Jump (squat, thrust, flight, landing) at jump_start_time'),
     ('jump_start_time', '4.0', float, 'Seconds after release before the jump starts'),
@@ -99,7 +92,6 @@ def generate_launch_description():
             RIGHT_CONTACT_GZ_TOPIC + '@ros_gz_interfaces/msg/Contacts[gz.msgs.Contacts',
             '/rotino/release@std_msgs/msg/Empty]gz.msgs.Empty',
             '/world/rotino_world/wrench@ros_gz_interfaces/msg/EntityWrench]gz.msgs.EntityWrench',
-            # persistent wrench (applied every physics step until cleared): step disturbance of rotino_benchmark
             '/world/rotino_world/wrench/persistent@ros_gz_interfaces/msg/EntityWrench]gz.msgs.EntityWrench',
             '/world/rotino_world/wrench/clear@ros_gz_interfaces/msg/Entity]gz.msgs.Entity',
         ],
@@ -146,8 +138,6 @@ def generate_launch_description():
         DeclareLaunchArgument('gui', default_value='true', description='Start the Gazebo GUI'),
         DeclareLaunchArgument('dashboard', default_value='false',
                               description='Open the real-time rotino_dashboard GUI'),
-        # spawn pose on the ground plane: the anchor of the world welds the torso where it appears, so the
-        # robot can start in front of the uneven-ground platforms (rotino_benchmark scenarios)
         DeclareLaunchArgument('spawn_x', default_value='0.0', description='Spawn x [m]'),
         DeclareLaunchArgument('spawn_y', default_value='0.0', description='Spawn y [m]'),
         DeclareLaunchArgument('spawn_yaw', default_value='0.0', description='Spawn heading [rad]'),

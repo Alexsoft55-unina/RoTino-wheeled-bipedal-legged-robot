@@ -52,7 +52,7 @@ def test_constant_lateral_acceleration_shifts_zmp_by_lipm_law():
 def test_angular_momentum_rate_moves_zmp():
     m = np.array([2.0])
     p = np.array([[0.0, 0.0, 0.2]])
-    dL = np.array([[0.0, 0.1, 0.0]])            # spinning up nose-down about +y
+    dL = np.array([[0.0, 0.1, 0.0]])
     z, _ = zmp.multibody_zmp(m, p, np.zeros_like(p), dL)
     assert np.allclose(z, [-0.1 / (2.0 * G), 0.0])
 
@@ -93,7 +93,7 @@ def test_urdf_robot_at_rest(model):
     assert np.allclose(out['zmp'], out['com'][:, :2])
     assert np.allclose(out['y_rel'], 0.0, atol=1e-12)
     assert np.allclose(out['fn_left'], out['fn_right'])
-    assert np.allclose(out['contact_l'][:, 2], 0.0, atol=1e-3)     # wheels touch z = 0 at spawn height
+    assert np.allclose(out['contact_l'][:, 2], 0.0, atol=1e-3)
 
 
 def test_urdf_constant_turn_matches_centripetal_shift(model):
@@ -107,8 +107,7 @@ def test_urdf_constant_turn_matches_centripetal_shift(model):
     out = zmp.zmp_series(m, t, pos, quat, {})
     k = N // 2
     a_c = v * v / R
-    shift = -out['com'][k, 2] * a_c / G            # left turn: centre on +y side, ZMP moves right (outward)
-    # rotation about z at constant rate adds no dL, so multibody and LIPM agree up to link offsets
+    shift = -out['com'][k, 2] * a_c / G
     assert math.isclose(out['y_rel'][k] * 0.5 * out['track'][k], shift, rel_tol=0.05)
     assert out['fn_right'][k] > out['fn_left'][k]
     assert math.isclose(out['friction_use'][k], a_c / (m.mu * G), rel_tol=0.02)
@@ -129,7 +128,7 @@ def test_repeated_log_rows_are_resampled_on_their_stamps(model):
     quat = np.tile([0, 0, 0, 1.0], (N, 1))
     clean = zmp.zmp_series(m, t, pos, quat, {})
     rng = np.random.default_rng(1)
-    idx = np.maximum.accumulate(np.clip(np.arange(N) - rng.integers(0, 2, N), 0, None))  # stale rows
+    idx = np.maximum.accumulate(np.clip(np.arange(N) - rng.integers(0, 2, N), 0, None))
     stepped = zmp.zmp_series(m, t[idx], pos[idx], quat[idx], {}, joint_t=t[idx])
     k = slice(50, -50)
     common = np.intersect1d(np.round(clean['t'][k], 6), np.round(stepped['t'], 6))
@@ -139,8 +138,7 @@ def test_repeated_log_rows_are_resampled_on_their_stamps(model):
 
 
 def test_online_estimator_handles_dropped_samples_and_split_streams(model):
-    """Live odom/joint_states arrive separately and drop ~3 % of the samples: the causal estimator
-    must still match the analytic turn (uniform-weight fits put samples after a gap at the wrong time)."""
+    """Split odom/joint_states streams dropping ~3 % of the samples: the causal estimator must match the turn."""
     m, xml = model
     N, R, v = 800, 1.0, 0.8
     t = np.arange(N) * DT

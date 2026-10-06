@@ -1,23 +1,4 @@
-"""
-Zero Moment Point of RoTino, reconstructed from the multibody dynamics.
-
-Gazebo Fortress publishes wheel contacts without wrenches, so the centre of pressure cannot be
-measured: the ZMP is rebuilt from the motion of every link (flat ground, z = 0):
-
-    x_zmp = [sum m_i ((zdd_i + g) x_i - xdd_i z_i) - sum dL_y,i] / sum m_i (zdd_i + g)
-    y_zmp = [sum m_i ((zdd_i + g) y_i - ydd_i z_i) + sum dL_x,i] / sum m_i (zdd_i + g)
-
-with L_i the angular momentum of link i about its own CoM. Accelerations and dL come from a
-Savitzky-Golay fit (numpy only: the system scipy does not load with numpy 2.x).
-
-With two point contacts the support polygon degenerates into the segment between the wheels, so:
-  - laterally the ZMP must stay inside [-d/2, d/2] (tip-over / wheel lift-off margin);
-  - longitudinally the true ZMP lies on the contact line: the residual e_long checks the
-    reconstruction, and the LIPM point x_com - z_com xdd_com / (zdd_com + g) shows what a lumped
-    model misses.
-
-Used online by rotino_dashboard (ZmpEstimator, causal) and offline by rotino_benchmark (zmp_series).
-"""
+"""Zero Moment Point of RoTino, reconstructed from the multibody dynamics."""
 
 import math
 from collections import deque
@@ -31,12 +12,10 @@ WHEEL_JOINTS = ('left_wheel_joint', 'right_wheel_joint')
 JOINTS = ('left_hip', 'right_hip', 'left_knee', 'right_knee', 'left_wheel_joint', 'right_wheel_joint')
 
 
-# ---------------------------------------------------------------------------- filtering
 def savgol_weights(n_points, order, deriv, dt, eval_at):
-    """Weights w such that w @ y[k] is the deriv-th derivative, at sample index eval_at, of the
-    least-squares polynomial of the given order through n_points uniformly spaced samples."""
+    """Savitzky-Golay weights: w @ y[k] is the deriv-th derivative of the polynomial fit at index eval_at."""
     k = np.arange(n_points, dtype=float) - eval_at
-    V = np.vander(k * dt, order + 1, increasing=True)          # columns 1, s, s^2, ...
+    V = np.vander(k * dt, order + 1, increasing=True)
     return math.factorial(deriv) * np.linalg.pinv(V)[deriv]
 
 
@@ -49,7 +28,7 @@ def savgol_filter(y, n_points, order, deriv, dt):
     half = n_points // 2
     out = np.empty_like(y)
     w = savgol_weights(n_points, order, deriv, dt, half)
-    windows = np.lib.stride_tricks.sliding_window_view(y, n_points, axis=0)   # (n-n_points+1, ..., n_points)
+    windows = np.lib.stride_tricks.sliding_window_view(y, n_points, axis=0)
     out[half:n - half] = windows @ w
     for i in range(half):
         out[i] = np.tensordot(savgol_weights(n_points, order, deriv, dt, i), y[:n_points], axes=(0, 0))
@@ -58,7 +37,6 @@ def savgol_filter(y, n_points, order, deriv, dt):
     return out
 
 
-# ---------------------------------------------------------------------------- ZMP formulas
 def multibody_zmp(m, p, a, dL, g=G):
     """m (n,), p/a/dL (..., n, 3) -> zmp (..., 2), vertical ground reaction Fz (...)."""
     fz_i = m * (a[..., 2] + g)
@@ -75,15 +53,11 @@ def lipm_zmp(com, com_acc, g=G):
 
 
 def support_metrics(zmp, c_left, c_right):
-    """ZMP against the wheel contact segment (ground plane).
-
-    Returns lam (share of the load on the left wheel, 0..1 inside the support), y_rel = 2 lam - 1
-    (+1 = on the left wheel), e_long (signed distance ahead of the contact line [m]), track d [m].
-    """
+    """ZMP against the wheel contact segment (ground plane)."""
     seg = c_left[..., :2] - c_right[..., :2]
     d = np.linalg.norm(seg, axis=-1)
-    lat = seg / d[..., None]                                    # points to the left wheel
-    fwd = np.stack([lat[..., 1], -lat[..., 0]], -1)            # lateral axis rotated by -90 deg
+    lat = seg / d[..., None]
+    fwd = np.stack([lat[..., 1], -lat[..., 0]], -1)
     rel = zmp - c_right[..., :2]
     lam = (rel * lat).sum(-1) / d
     e_long = ((zmp - 0.5 * (c_left[..., :2] + c_right[..., :2])) * fwd).sum(-1)
@@ -96,7 +70,6 @@ def wheel_loads(lam, fz):
     return lam * fz, (1.0 - lam) * fz
 
 
-# ---------------------------------------------------------------------------- model
 class ZmpModel:
     """Link masses/inertias from the URDF and the world state of every link for a robot pose."""
 
@@ -115,7 +88,7 @@ class ZmpModel:
             self.names.append(name)
             masses.append(mass)
             coms.append(com_local)
-            inertias.append(R @ I @ R.T)                        # inertia in the link frame
+            inertias.append(R @ I @ R.T)
         self.m = np.array(masses)
         self.com_local = np.array(coms)
         self.I_local = np.array(inertias)
@@ -140,7 +113,7 @@ class ZmpModel:
         for link, axis in zip(self.wheel_links, self.wheel_axes):
             Rw, pw = frames[link]
             a = Rw @ axis
-            down = np.array([0.0, 0.0, 1.0]) - a[2] * a        # z projected on the wheel plane
+            down = np.array([0.0, 0.0, 1.0]) - a[2] * a
             contacts.append(pw - self.wheel_radius * down / np.linalg.norm(down))
         return p, R, np.array(contacts)
 
@@ -172,11 +145,8 @@ def _result(model, p, a, L_dot, contacts):
     }
 
 
-# ---------------------------------------------------------------------------- online
 class ZmpEstimator:
-    """ZMP for live display: quadratic fit over the last `window` seconds, evaluated at the centre of
-    the window, so the result lags by window / 2. Evaluating the second derivative at the newest
-    sample instead amplifies the noise by an order of magnitude (seen live: +-200 mm spikes)."""
+    """ZMP for live display: quadratic fit over the last `window` seconds, so the result lags by window / 2."""
 
     def __init__(self, urdf_xml, window=0.05, rate=500.0, order=2):
         self.model = ZmpModel(urdf_xml)
@@ -191,9 +161,6 @@ class ZmpEstimator:
         self.pending = deque(maxlen=50)
         self.jhist = deque(maxlen=50)
 
-    # Live streams: odom and joint_states arrive separately and ~2.5 % of the pairs are one sample
-    # apart; pairing "latest with latest" turns that into tens of mm of ZMP noise after two
-    # derivatives. Each base pose waits for the joint sample at (or after) its stamp instead.
     def push_base(self, t, base_pos, base_quat):
         self.pending.append((t, base_pos, base_quat))
         return self._drain()
@@ -201,7 +168,7 @@ class ZmpEstimator:
     def push_joints(self, t, joints):
         if self.jhist and t <= self.jhist[-1][0]:
             if t < self.jhist[-1][0] - 0.5:
-                self.reset()                                    # simulation restarted
+                self.reset()
             else:
                 return None
         self.jhist.append((t, dict(joints)))
@@ -215,7 +182,7 @@ class ZmpEstimator:
             i = int(np.searchsorted(ts, t - 1e-6))
             if i < len(ts) and abs(ts[i] - t) < 1e-6 or i == 0:
                 joints = self.jhist[min(i, len(ts) - 1)][1]
-            else:                                               # missing sample: linear in between
+            else:
                 (t0, j0), (t1, j1) = self.jhist[i - 1], self.jhist[i]
                 w = (t - t0) / (t1 - t0)
                 joints = {n: (1 - w) * j0[n] + w * j1[n] for n in j0}
@@ -223,12 +190,11 @@ class ZmpEstimator:
         return out
 
     def update(self, t, base_pos, base_quat, joints):
-        """base_quat = (x, y, z, w); joints: {name: angle}. Returns the result for the sample at the
-        centre of the window (its time in result['t']), or None while filling."""
+        """base_quat = (x, y, z, w); joints: {name: angle}. Returns the window-centre result, None while filling."""
         p, R, contacts = self.model.state(np.asarray(base_pos, float), quat_to_matrix(*base_quat), joints)
         if self.prev is not None and t <= self.prev[0]:
             if t < self.prev[0] - 0.5:
-                self.reset()                                    # simulation restarted
+                self.reset()
             else:
                 return None
         L = np.zeros_like(p) if self.prev is None else self.model.angular_momentum(self.prev[1], R, t - self.prev[0])
@@ -237,8 +203,6 @@ class ZmpEstimator:
         if len(self.hist) < self.n:
             return None
         centre = self.hist[self.n // 2]
-        # fit on the actual stamps: live topics drop samples (~484 of 500 Hz) and uniform
-        # Savitzky-Golay weights would put the points after a gap at the wrong time
         s_ = np.array([h[0] for h in self.hist]) - centre[0]
         pinv = np.linalg.pinv(np.vander(s_, self.order + 1, increasing=True))
         P = np.array([h[1] for h in self.hist])
@@ -251,7 +215,6 @@ class ZmpEstimator:
         return out
 
 
-# ---------------------------------------------------------------------------- offline
 def _unique_increasing(t):
     """Mask keeping the first sample of every new, increasing stamp (logs repeat the last message)."""
     t = np.asarray(t, float)
@@ -266,12 +229,7 @@ def _unique_increasing(t):
 
 
 def zmp_series(model, t, base_pos, base_quat, joints, window=0.04, order=2, joint_t=None):
-    """Non-causal ZMP over a whole log.
-
-    t (N,) stamps of the base samples, base_pos (N,3), base_quat (N,4) as x,y,z,w, joints {name: (N,)}
-    stamped by joint_t (default t). Each signal keeps only its new stamps and is interpolated on a
-    uniform grid at the median base period; the result dict has arrays on that grid plus 't'.
-    """
+    """Non-causal ZMP over a whole log."""
     t = np.asarray(t, float)
     keep = _unique_increasing(t)
     tb = t[keep]
@@ -287,7 +245,7 @@ def zmp_series(model, t, base_pos, base_quat, joints, window=0.04, order=2, join
     pos = np.stack([interp(base_pos[:, k]) for k in range(3)], -1)
     q = np.asarray(base_quat, float)[keep]
     flips = np.concatenate([[1.0], np.where((q[1:] * q[:-1]).sum(-1) < 0, -1.0, 1.0)])
-    q = q * np.cumprod(flips)[:, None]                          # continuous sign before interpolating
+    q = q * np.cumprod(flips)[:, None]
     q = np.stack([np.interp(tu, tb, q[:, k]) for k in range(4)], -1)
     q /= np.linalg.norm(q, axis=-1, keepdims=True)
     jq = {name: interp(v, tj[keep_j], keep_j) for name, v in joints.items()}

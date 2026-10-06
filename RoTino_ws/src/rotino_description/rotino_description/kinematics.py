@@ -2,7 +2,6 @@ import numpy as np
 from urdf_parser_py import xml_reflection
 from urdf_parser_py.urdf import URDF
 
-# Silence warnings about <gazebo>/<ros2_control> tags that urdf_parser_py does not know.
 xml_reflection.core.on_error = lambda *args, **kwargs: None
 
 

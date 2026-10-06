@@ -1,16 +1,4 @@
-"""Step disturbance for the benchmark: a constant horizontal force on the torso, identical for every law.
-
-The impulsive push of the scenarios is applied by the controllers themselves; the step force is applied
-from outside, through the persistent wrench of Gazebo's ApplyLinkWrench system
-(/world/rotino_world/wrench/persistent, bridged by robot.launch.py): Gazebo applies it at every physics
-step until it is cleared, so its value does not depend on the timing of the ROS messages.
-
-Time base: the first field of /rotino/debug, the time since the release from the anchor that both laws
-publish and the logger writes as time_s. The force is backwards along the heading the robot has when
-it starts (positive force = backwards, like the impulsive push).
-
-    ros2 run rotino_benchmark disturbance --ros-args -p use_sim_time:=true -p force:=3.0 -p start_time:=4.0
-"""
+"""Step disturbance for the benchmark: a constant horizontal force on the torso, identical for every law."""
 
 import math
 
@@ -29,9 +17,9 @@ class StepDisturbance(Node):
 
     def __init__(self):
         super().__init__('rotino_disturbance')
-        self.force = float(self.declare_parameter('force', 3.0).value)          # N, + = backwards
-        self.start_time = float(self.declare_parameter('start_time', 4.0).value)  # s after release
-        self.duration = float(self.declare_parameter('duration', 0.0).value)      # s, 0 = until the end
+        self.force = float(self.declare_parameter('force', 3.0).value)
+        self.start_time = float(self.declare_parameter('start_time', 4.0).value)
+        self.duration = float(self.declare_parameter('duration', 0.0).value)
         self.pub = self.create_publisher(EntityWrench, PERSISTENT_TOPIC, 10)
         self.clear_pub = self.create_publisher(Entity, CLEAR_TOPIC, 10)
         self.heading = None
@@ -44,7 +32,7 @@ class StepDisturbance(Node):
     def _odom_cb(self, msg):
         q = msg.pose.pose.orientation
         yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
-        if self.state == 'wait':            # heading of the robot before the step, then frozen
+        if self.state == 'wait':
             self.heading = (math.cos(yaw), math.sin(yaw))
 
     def _entity(self):
@@ -58,7 +46,6 @@ class StepDisturbance(Node):
             return
         t = msg.data[0]
         if self.state == 'wait' and t >= self.start_time and self.heading is not None:
-            # published once: every persistent message adds a wrench, a repeated one would double the force
             w = EntityWrench()
             w.entity = self._entity()
             w.wrench.force.x = -self.force * self.heading[0]

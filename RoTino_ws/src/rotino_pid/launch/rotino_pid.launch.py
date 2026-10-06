@@ -1,9 +1,4 @@
-"""Runs RoTino with the cascaded PD/PID control law.
-
-Everything except the controller comes from rotino_description/launch/robot.launch.py, so all the
-scenario arguments (velocity_enable, push_enable, jump_enable, gui, dashboard, ...) work here too;
-run with --show-args to list them.
-"""
+"""Runs RoTino with the cascaded PD/PID control law."""
 
 import os
 

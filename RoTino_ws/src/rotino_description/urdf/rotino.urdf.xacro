@@ -1,5 +1,4 @@
 <?xml version="1.0"?>
-<!-- RoTino_BOT(II): URDF conversion of RoTino_BOT(II).xml (MuJoCo). All frames, masses and joint axes match the MJCF. -->
 <robot name="rotino" xmlns:xacro="http://www.ros.org/wiki/xacro">
 
   <xacro:arg name="controllers_file" default="$(find rotino_description)/config/rotino_controllers.yaml"/>
@@ -13,11 +12,8 @@
   <xacro:property name="hub_radius" value="0.025"/>
   <xacro:property name="hub_length" value="0.062"/>
 
-  <!-- Hip/knee are torque-controlled through ros2_control (leg_effort_controller), as required by the
-       virtual model control of the WBR controller. -->
   <xacro:property name="leg_damping" value="0.8"/>
   <xacro:property name="leg_effort" value="60.0"/>
-  <!-- MuJoCo wheel motor: gear 18, ctrlrange [-1, 1] -> max 18 Nm -->
   <xacro:property name="wheel_effort" value="18.0"/>
 
   <material name="torso_mat"><color rgba="0.55 0.55 0.58 1"/></material>
@@ -26,7 +22,6 @@
   <material name="wheel_mat"><color rgba="0.03 0.03 0.03 1"/></material>
   <material name="hub_mat"><color rgba="0.10 0.70 0.55 1"/></material>
 
-  <!-- ===================== Torso ===================== -->
   <link name="base_link">
     <visual>
       <origin xyz="0.025 0 0"/>
@@ -64,7 +59,6 @@
     </inertial>
   </link>
 
-  <!-- ===================== Legs ===================== -->
   <xacro:macro name="leg" params="side reflect">
     <joint name="${side}_hip" type="revolute">
       <parent link="base_link"/>
@@ -142,8 +136,6 @@
         <origin rpy="${pi/2} 0 0"/>
         <geometry><cylinder radius="${wheel_radius}" length="${wheel_length}"/></geometry>
       </collision>
-      <!-- wheel 0.32 kg + hub 0.06 kg; iyy includes the MuJoCo wheel armature (0.002),
-           ixx/izz raised so the tensor stays physically valid (ixx + izz >= iyy) -->
       <inertial>
         <mass value="0.38"/>
         <inertia ixx="0.0013" ixy="0" ixz="0" iyy="0.00259475" iyz="0" izz="0.0013"/>
@@ -175,7 +167,6 @@
   <xacro:leg side="left" reflect="1"/>
   <xacro:leg side="right" reflect="-1"/>
 
-  <!-- ===================== Sensors ===================== -->
   <gazebo reference="base_link">
     <mu1>1.8</mu1>
     <mu2>1.8</mu2>
@@ -186,7 +177,6 @@
     </sensor>
   </gazebo>
 
-  <!-- ===================== ros2_control ===================== -->
   <xacro:macro name="effort_joint" params="name limit">
     <joint name="${name}">
       <command_interface name="effort">
@@ -216,7 +206,6 @@
       <parameters>$(arg controllers_file)</parameters>
     </plugin>
 
-    <!-- Ground-truth base pose/twist in the world frame (MuJoCo read these directly from qpos). -->
     <plugin filename="ignition-gazebo-odometry-publisher-system" name="ignition::gazebo::systems::OdometryPublisher">
       <odom_frame>world</odom_frame>
       <robot_base_frame>base_link</robot_base_frame>
@@ -226,6 +215,5 @@
       <dimensions>3</dimensions>
     </plugin>
 
-    <!-- The hold-until-release DetachableJoint lives on the static rotino_anchor model in rotino_world.sdf. -->
   </gazebo>
 </robot>
