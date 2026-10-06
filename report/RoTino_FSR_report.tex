@@ -2,9 +2,6 @@
 % Field and Service Robotics, final technical project, a.y. 2025/2026
 %
 % Build (from this directory):   pdflatex RoTino_FSR_report && pdflatex RoTino_FSR_report
-% Figures (from the workspace):  python3 report/scripts/make_design_figures.py
-%                                python3 report/scripts/make_result_figures.py --suite <benchmark suite directory>
-% Numbers quoted in the text:    python3 report/scripts/print_numbers.py
 \documentclass[11pt,a4paper]{article}
 
 \usepackage[utf8]{inputenc}
@@ -34,7 +31,6 @@
 \renewcommand{\textfraction}{0.08}
 \renewcommand{\floatpagefraction}{0.8}
 
-\newcommand{\code}[1]{\texttt{#1}}
 \newcommand{\unit}[1]{\,\mathrm{#1}}
 \newcommand{\tc}{\tau_c}
 \newcommand{\td}{\tau_d}
@@ -59,7 +55,7 @@ University of Naples Federico II --- October 2026}
 
 \begin{abstract}
 \noindent RoTino is a 4.3\,kg wheeled bipedal robot: two articulated legs, each ending in a driven wheel, carry a
-torso that must be kept in balance like an inverted pendulum. The robot is simulated in Gazebo with ROS\,2 and
+torso that must be kept in balance like an inverted pendulum. The robot is simulated in Gazebo with
 torque control on its six joints. This report describes how it was modelled and how two control laws of very
 different nature were designed, implemented and compared on it. The first is a cascaded PID in which the Zero
 Moment Point is the variable that the wheels control: a capture-point loop decides where the contact should be
@@ -67,7 +63,7 @@ with respect to the centre of mass, and a preview of the planned path makes the 
 The second re-implements the decoupled architecture of Cui \emph{et al.}: a model predictive controller plans the
 motion of the upper body, a gain-scheduled LQR balances the wheels and virtual model control drives the legs.
 The two laws are run on the same robot, world and scenarios---pushes, constant forces, reference tracking, curved
-paths, uneven ground and a jump---and the differences in the results are traced back to the design choices that
+paths and uneven ground---and the differences in the results are traced back to the design choices that
 cause them.
 \end{abstract}
 
@@ -89,7 +85,7 @@ Although two wheels give the planar motion of a differential drive, the project 
 the kinematic layer reduces to a simple heading guidance, and the whole difficulty lies in the underactuated dynamics
 of balance.
 
-The robot, named RoTino, is simulated in Gazebo Fortress with ROS\,2 Humble. Two control laws were developed for
+The robot, named RoTino, is simulated in Gazebo. Two control laws were developed for
 it. The first is a cascade of PID loops that was redesigned around the ZMP. The second follows the paper that
 guided the project, \emph{Modeling and Control of a Wheeled Biped Robot} by Cui \emph{et al.}~\cite{cui2022}: the
 robot is decoupled into a wheeled inverted pendulum of variable length, balanced by a time-varying LQR (TV-LQR),
@@ -97,34 +93,27 @@ and a lumped-mass upper body, moved by a model predictive controller (MPC) throu
 legs. Having both on the same plant allows a question to be asked that neither answers alone: what does the
 model-based, optimisation-based architecture buy with respect to a well-designed cascade, and what does it cost?
 
-\paragraph{Starting point and novelty.} The mechanical model of the robot was available as a MuJoCo description,
-together with a balance-and-jump controller that commanded the legs through position servos. The model was
-converted to URDF with a torque interface on every joint, and the controller was ported to ROS\,2. Ported as it
-was, it did not survive the change: with the leg loop closed in a ROS node at 500\,Hz rather than inside the
-simulator, the legs entered a limit cycle. Everything else described in this report was developed in the project:
+\paragraph{Starting point and novelty.} The mechanical model of the robot was available from an earlier simulation,
+together with a balance controller that commanded the legs through position servos. Once every joint was
+torque controlled and all the loops were closed at 500\,Hz, that controller did not survive the change: the legs
+entered a limit cycle. Everything else described in this report was developed in the project:
 
 \begin{itemize}
-  \item a ROS\,2 workspace in which the simulation, the robot, the scenarios and the telemetry are shared and only
-        the controller node changes, with a model library that computes every parameter of the models from the URDF
-        (Section~\ref{sec:workspace});
   \item the modelling of the robot: configuration space and constraints, a planar Lagrangian model, and the two
         reduced models used for control with the parameters of RoTino (Section~\ref{sec:model});
   \item a cascaded PID controller designed around the ZMP and the capture point, with a preview of the planned path
         and a gain design supported by a robustness analysis (Section~\ref{sec:pid});
-  \item an implementation of the architecture of Cui \emph{et al.}\ in which every numerical block---Riccati solver,
-        condensed quadratic program, Kalman filter---is written from scratch, with several adaptations that the small
-        size of the robot and the torque-controlled simulation required (Section~\ref{sec:mpc});
-  \item a benchmark of twelve scenarios run with both laws, in which the ZMP is reconstructed from the multibody
-        dynamics because the simulator does not provide contact forces, and a live dashboard
-        (Section~\ref{sec:results}).
+  \item an implementation of the architecture of Cui \emph{et al.}\ on RoTino (Section~\ref{sec:mpc});
+  \item a benchmark of eleven scenarios run with both laws, in which the ZMP is reconstructed from the multibody
+        dynamics because the simulator does not provide contact forces (Section~\ref{sec:results}).
 \end{itemize}
 
 The two authors worked jointly on every part of the project---modelling, both controllers, the benchmark and the
 analysis of the results---so no separate attribution of the work is made.
 
 % =====================================================================================================
-\section{The robot and the software workspace}
-\label{sec:workspace}
+\section{The robot}
+\label{sec:model}
 
 \subsection{RoTino}
 
@@ -132,8 +121,7 @@ RoTino (Fig.~\ref{fig:robot}a) has a box-shaped torso and two identical legs. Ea
 thigh and a shank of equal length, with a hip and a knee joint whose axes are parallel to the wheel axle, and ends
 in a driven wheel. All six joints are torque controlled. In the nominal posture thigh and shank are at
 $\pm 45^\circ$, so the wheel axle sits exactly below the hips. Table~\ref{tab:params} lists the parameters that
-matter for control. They are not typed into the controllers: a model library reads them from the URDF, so that
-the description of the robot is the only place where they are stored.
+matter for control.
 
 Two features of this small robot shape the control problem. First, about four fifths of the mass sit above the
 wheels and close to them: the equivalent pendulum is only 16\,cm long, which makes the unstable dynamics fast.
@@ -144,7 +132,7 @@ that ``torso upright'' means ``balanced'', and has to find the equilibrium by it
 \begin{figure}[t]
   \centering
   \includegraphics[width=\linewidth]{fig_robot.pdf}
-  \caption{Sagittal view of RoTino, drawn to scale from the URDF. The purple segment is the equivalent pendulum
+  \caption{Sagittal view of RoTino, drawn to scale. The purple segment is the equivalent pendulum
   used for control: it joins the wheel axle to the centre of mass $m_b$ of everything above the wheels, with length
   $l$ and lean angle $\theta$ from the vertical. Folding or stretching the legs changes $l$ by a factor of three.}
   \label{fig:robot}
@@ -152,7 +140,7 @@ that ``torso upright'' means ``balanced'', and has to find the equilibrium by it
 
 \begin{table}[t]
   \centering\small
-  \caption{Main parameters of RoTino, computed from the URDF by the model library (rounded).}
+  \caption{Main parameters of RoTino (rounded).}
   \label{tab:params}
   \begin{tabular}{@{}llr@{\hspace{10mm}}llr@{}}
     \toprule
@@ -166,126 +154,9 @@ that ``torso upright'' means ``balanced'', and has to find the equilibrium by it
   \end{tabular}
 \end{table}
 
-\subsection{Simulation set-up}
 
-The robot runs in Gazebo Fortress with a physics step of 0.5\,ms. The six joints are exposed through
-\code{ros2\_control} as effort interfaces and are commanded at 500\,Hz, the rate of every loop of this report
-unless stated otherwise. The sensors are the joint encoders, an IMU on the torso, a contact sensor on each wheel
-and, for analysis, a plugin that publishes the true pose of the torso. In this version of the simulator the contact
-sensors report that a wheel is touching the ground, but not the force it exchanges: this limitation is the reason
-why the ZMP is reconstructed rather than measured (Section~\ref{sec:benchmark}).
 
-Every run starts in the same way. The robot is spawned with the torso welded to a fixed anchor; the controller
-brings the legs to the standing posture and then publishes a release message that detaches the anchor. From that
-moment the robot is on its own, and time in all the plots is counted from the release. External disturbances are
-applied to the torso through the simulator: an impulsive push and a constant force.
 
-The world (Fig.~\ref{fig:arena}) is a flat arena with three platforms of uneven ground placed away from the origin:
-three speed bumps, a 5\,\% ramp leading to a raised plateau, and a field of tiles of random height that the two
-wheels cross on different columns, so that the left and the right wheel meet different steps.
-
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=\linewidth]{fig_arena.pdf}
-  \caption{The test arena. Dots mark where the robot is released and arrows the path it is asked to follow in each
-  uneven-ground scenario; the flat-ground scenarios start from the origin. Tiles are shaded by height.}
-  \label{fig:arena}
-\end{figure}
-
-\subsection{Organisation of the workspace}
-\label{sec:packages}
-
-The workspace \code{rotino\_ws} contains five ROS\,2 Python packages (Table~\ref{tab:packages},
-Fig.~\ref{fig:graph}). Their organisation follows one rule: \emph{when two controllers are compared, nothing but
-the controller may differ}. Four choices enforce it.
-
-\begin{table}[t]
-  \centering\small
-  \caption{The packages of the workspace.}
-  \label{tab:packages}
-  \begin{tabularx}{\linewidth}{@{}lX@{}}
-    \toprule
-    Package & Content \\
-    \midrule
-    \code{rotino\_description} & URDF of the robot, Gazebo world, controller configuration and the common launch
-      file; the shared model library: forward kinematics and CoM from the URDF, the reduced models of
-      Section~\ref{sec:reduced}, the multibody ZMP and the reference trajectories. \\
-    \code{rotino\_pid} & The cascaded PID with the ZMP (Section~\ref{sec:pid}): the balance law as a pure NumPy
-      module with its offline tests, and the ROS node with heading control, leg control and jump supervisor. \\
-    \code{rotino\_mpc} & The MPC + TV-LQR + VMC controller (Section~\ref{sec:mpc}): the numerical blocks (Riccati
-      solver, gain schedule, condensed QP, Kalman filter) and the ROS node. \\
-    \code{rotino\_benchmark} & The catalogue of scenarios, the scripts that run them headless with both laws, the
-      500\,Hz logger, the step-force node, the metrics, the ZMP analysis and the comparison plots. \\
-    \code{rotino\_dashboard} & A real-time dashboard (states, torques, phases, top view with the ZMP) that also
-      sends live commands: speed, turn rate, height, jump and push. \\
-    \bottomrule
-  \end{tabularx}
-\end{table}
-
-\begin{figure}[t]
-  \centering
-  \begin{tikzpicture}
-    \node[blk, text width=30mm] (gz) at (1.6,0) {Gazebo Fortress:\\ world and physics,\\ robot and sensors};
-    \node[blk, text width=31mm] (rc) at (7.65,0) {\code{ros2\_control}\\ and bridge to ROS,\\ torque interfaces};
-    \node[key, text width=35mm] (ctl) at (14.3,0) {controller node:\\ \code{rotino\_pid} \emph{or} \code{rotino\_mpc}};
-    \node[blk, text width=35mm] (lib) at (14.3,1.6) {\code{rotino\_description}\\ model library};
-    \node[blk, text width=35mm] (ben) at (14.3,-1.7) {\code{rotino\_benchmark}\\ logger and metrics};
-    \node[blk, text width=31mm] (dash) at (7.65,-1.7) {\code{rotino\_dashboard}\\ live plots and commands};
-    \draw[sig] ([yshift=2mm]gz.east) -- node[lab, above]{joint states, IMU,\\ contacts, true pose} ([yshift=2mm]rc.west);
-    \draw[sig] ([yshift=-2mm]rc.west) -- node[lab, below]{joint torques} ([yshift=-2mm]gz.east);
-    \draw[sig] ([yshift=2mm]rc.east) -- node[lab, above]{measurements} ([yshift=2mm]ctl.west);
-    \draw[sig] ([yshift=-2mm]ctl.west) -- node[lab, below]{torques, release, push} ([yshift=-2mm]rc.east);
-    \draw[sig, dashed] (lib) -- node[lab, right]{imported} (ctl);
-    \draw[sig] (ctl) -- node[lab, right]{telemetry} (ben);
-    \draw[sig] (dash.east) -- node[lab, below, sloped]{live commands} (ctl.south west);
-  \end{tikzpicture}
-  \caption{Structure of the workspace at run time. Only the shaded node changes between the two control laws; the
-  model library is imported by the controllers, by the benchmark and by the dashboard.}
-  \label{fig:graph}
-\end{figure}
-
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=0.8\linewidth]{dashboard.png}
-  \caption{The dashboard during a fast S-curve with the MPC controller (the labels of the interface are in Italian).
-  Left: phase and diagnostic indicators, side view of the robot with the forces, top view with the ZMP between the
-  two wheels. Right: rolling plots of states, references, torques, wheel loads and estimation error.}
-  \label{fig:dashboard}
-\end{figure}
-
-\emph{One launch file.} The simulation, the robot and the scenario are started by a single launch file in
-\code{rotino\_description}; each control package includes it and passes only the name of its own executable. The
-scenarios---a trapezoidal speed profile, a back-and-forth motion, an S-shaped path, a change of height, a push, a
-jump---are launch arguments that both controllers understand in the same way.
-
-\emph{One model.} Kinematics, masses and the reduced models are computed in one library from the URDF. Both
-controllers, the dashboard and the benchmark import the same functions, so a difference in the results cannot come
-from a difference in the model.
-
-\emph{One telemetry.} Both controllers publish the same debug vectors (pitch, position, speed, references, commanded
-offsets and torques), so one logger and one set of metrics serve both.
-
-\emph{No black boxes.} The numerical parts are written in plain NumPy and do not depend on ROS: the Riccati
-equation, the quadratic programs, the Kalman filter and the filters used for the ZMP are implemented in the
-workspace rather than taken from a control library. This makes them readable and testable offline: about forty unit
-tests check the balance law on the linear model, the ZMP reconstruction on cases with a known answer and the
-benchmark metrics.
-
-In practice, once the workspace is built, one command starts the simulation with a controller and a scenario, and one
-command runs the whole comparison and writes its tables and plots:
-{\footnotesize
-\begin{verbatim}
-  ros2 launch rotino_pid rotino_pid.launch.py velocity_enable:=true velocity_max:=1.0
-  ros2 launch rotino_mpc rotino_mpc.launch.py push_enable:=true dashboard:=true
-  ros2 run rotino_benchmark suite
-\end{verbatim}
-}
-\noindent The dashboard (Fig.~\ref{fig:dashboard}) shows the same quantities live and can drive the robot by hand,
-which was the quickest way to find the behaviours worth turning into benchmark scenarios.
-
-% =====================================================================================================
-\section{Modelling}
-\label{sec:model}
 
 \subsection{Configuration space, constraints and underactuation}
 
@@ -294,7 +165,7 @@ with six degrees of freedom (DoF), and each of the two hips, two knees and two w
 The shape of the configuration space follows from the nature of each coordinate. The pose of the torso lives in
 $SE(3)$; hips and knees have mechanical limits, so each spans a closed interval rather than a circle; the wheels
 turn indefinitely, so together they span a torus. The configuration space is therefore
-$SE(3)\times I^4\times T^2$, where $I$ is an interval. For the orientation of the torso the code uses quaternions,
+$SE(3)\times I^4\times T^2$, where $I$ is an interval. The orientation of the torso is described with quaternions,
 an implicit representation that avoids the singularities of a three-angle parameterisation.
 
 Contact with the ground adds constraints of two kinds, and the distinction matters because only one of them reduces
@@ -351,7 +222,7 @@ can do work on it: the coordinate associated with that motion---the pitch of the
 of partial feedback linearisation~\cite{spong1994}, the pitch can only be controlled through a non-collocated
 scheme, by using the actuated coordinates to produce the inertial forces that move the passive one. Both controllers
 of this report do exactly this, each in its own way. The planar model also served as an independent check of the
-model library: the two give the same position of the CoM for the same posture.
+reduced models introduced next: they give the same position of the CoM for the same posture.
 
 \subsection{The reduced models used for control}
 \label{sec:reduced}
@@ -360,7 +231,7 @@ Neither controller uses \eqref{eq:lagrange} directly. Following Cui \emph{et al.
 split into two simple models, each of which captures one part of the problem.
 
 \paragraph{Equivalent pendulum.} Everything above the wheels---torso, thighs and shanks---is replaced by its
-centre of mass. Its position with respect to the axle, computed by the library from the joint angles through the
+centre of mass. Its position with respect to the axle, computed from the joint angles through the
 forward kinematics, defines a pendulum of length $l$ and lean angle $\theta$ (Fig.~\ref{fig:robot}). When the legs
 fold or stretch, $l$ changes from 7 to 22\,cm: the pendulum has a \emph{variable length}.
 
@@ -400,13 +271,6 @@ and $p$ the position of the contact: the CoM accelerates away from the contact, 
 RoTino $\omega\approx 7$\,rad/s. Whoever controls $\delta$ controls the acceleration of the robot; the MPC calls
 it $\Delta s$ and optimises it over a horizon, the PID calls it the ZMP offset and regulates it with a cascade.
 
-\paragraph{Differences from the paper.} The structure of the models is that of~\cite{cui2022}; the numbers are
-those of RoTino and come from the URDF. One departure is worth noting. The paper assigns to the upper body the
-inertia of a uniform rod, $m_b l^2/3$. For RoTino, whose torso is compact and sits right above the hips, this
-estimate is almost twice the real value in the nominal posture and less than half of it when the robot squats. The
-library therefore computes the inertia of the upper body about its own CoM for each posture, and the controllers use
-that value. The sign of the yaw equation was also adapted to the axes convention of ROS.
-
 \begin{figure}[t]
   \centering
   \includegraphics[width=\linewidth]{fig_vlwip_lqr.pdf}
@@ -434,7 +298,7 @@ cart--table view of Kajita \emph{et al.}~\cite{kajita2003}, read for a robot who
 
 The controller is organised accordingly (Fig.~\ref{fig:pidarch}). An outer loop decides which offset is needed;
 an inner loop makes the wheels realise it; the heading uses the differential torque; the legs keep the posture.
-All the quantities it needs---the CoM, the contact line, the heading---are computed with the model library from the
+All the quantities it needs---the CoM, the contact line, the heading---are computed from the
 pose of the torso and the joint angles. In this controller the pose of the torso is taken from the simulator; the
 consequences of this choice for the comparison are discussed in Section~\ref{sec:benchmark}.
 
@@ -448,7 +312,7 @@ consequences of this choice for the comparison are discussed in Section~\ref{sec
     \node[blk, text width=19mm] (traj) at (1.1,-1.5) {planar path\\ and heading};
     \node[blk, text width=14mm] (guid) at (3.55,-1.5) {lateral\\ guidance};
     \node[blk, text width=29mm] (yaw) at (7.05,-1.5) {heading PID and\\ friction feedforward};
-    \node[blk, text width=19mm] (sup) at (1.1,-3.0) {jump\\ supervisor};
+    \node[blk, text width=19mm] (sup) at (1.1,-3.0) {commanded\\ leg length};
     \node[blk, text width=29mm] (leg) at (7.05,-3.0) {Cartesian PD and\\ weight feedforward};
     \node[blk, text width=13mm, minimum height=25mm] (mix) at (13.85,-0.75) {$\tau_{l,r}=$\\ $\tc\mp\td$};
     \node[blk, text width=9mm, minimum height=40mm] (rob) at (15.7,-1.5) {robot};
@@ -459,7 +323,7 @@ consequences of this choice for the comparison are discussed in Section~\ref{sec
     \draw[sig] (traj) -- (guid);
     \draw[sig] (guid) -- node[lab, above]{$\varphi_{cmd}$} (yaw);
     \draw[sig] (yaw) -- node[lab, above, pos=0.5]{$\td$} (yaw -| mix.west);
-    \draw[sig] (sup) -- node[lab, above]{leg targets and gains} (leg);
+    \draw[sig] (sup) -- node[lab, above]{wheel position target} (leg);
     \draw[sig] (leg) -- node[lab, above, pos=0.5]{$\tau_{hip}$, $\tau_{knee}$} (leg -| rob.west);
     \draw[sig] (mix) -- (mix -| rob.west);
     \draw[sig] (rob.south) -- ++(0,-0.45) -| node[lab, above, pos=0.25]{torso pose and joint angles $\rightarrow$ centre
@@ -523,20 +387,20 @@ stays bounded, and this solution is not causal: it is the planned path smoothed 
   c_{ref}(t)=\frac{\omega}{2}\int_{-\infty}^{+\infty} e^{-\omega|u|}\,p_{ref}(t+u)\,du .
   \label{eq:preview}
 \end{equation}
-The CoM reference thus looks about $1/\omega\approx0.14$\,s ahead and behind (Fig.~\ref{fig:preview}a); in the
-code the integral is a weighted sum over a window of the planned path. The reference acceleration
+The CoM reference thus looks about $1/\omega\approx0.14$\,s ahead and behind; in
+practice the integral is a weighted sum over a window of the planned path. The reference acceleration
 $a_{ref}=\omega^2(c_{ref}-p_{ref})$ that enters the feedforward is a smoothed version of the acceleration of the
-path that starts \emph{before} it (Fig.~\ref{fig:preview}b): the robot begins to lean a few tenths of a second
+path that starts \emph{before} it (Fig.~\ref{fig:preview}): the robot begins to lean a few tenths of a second
 before the wheels are asked to move. This is the ZMP preview of walking pattern generators~\cite{kajita2003},
 applied here to a known path. When the robot is driven by live commands the future is unknown, and the feedforward
 falls back on the current, rate-limited acceleration of the command.
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\linewidth]{fig_lipm_preview.pdf}
-  \caption{The preview of the planned path. (a) The kernel that turns the planned wheel path into the reference of
-  the centre of mass. (b) For a trapezoidal speed profile, the acceleration of the path is a sequence of steps; the
-  acceleration reference obtained with the preview anticipates each of them.}
+  \includegraphics[width=0.72\linewidth]{fig_lipm_preview.pdf}
+  \caption{The preview of the planned path for a trapezoidal speed profile (1\,m/s, 0.6\,m/s$^2$): the acceleration
+  of the path is a sequence of steps, and the acceleration reference obtained with the preview anticipates each of
+  them.}
   \label{fig:preview}
 \end{figure}
 
@@ -556,9 +420,9 @@ $K_\delta$ can be less than doubled before some of the ten cases become unstable
 those poles back to the real axis and widens the stable range of $K_\delta$. The value $\rho=0.4$ is where the
 dominant poles are best damped; the stiffness chosen for the inner loop, 60\,Nm per metre of offset, then has a
 margin of about four. The price is that the outer loop corrects a position error more slowly, and the integral term
-is there to recover what the reduced authority leaves. The same linear model, driven by the actual control code, is
-used by the unit tests of the package: tracking of the trapezoid, rejection of the push of the benchmark and
-removal of an unknown offset of the CoM are all checked offline before the robot is simulated.
+is there to recover what the reduced authority leaves. The same linear model was used to
+check the control law before simulating the robot: tracking of the trapezoid, rejection of the push of the benchmark
+and removal of an unknown offset of the CoM.
 
 \begin{figure}[t]
   \centering
@@ -596,7 +460,7 @@ The common and the differential torque are finally mixed as $\tau_{l,r}=\tc\mp\t
 torque limit, it is the common torque that keeps priority: a robot that turns late is a nuisance, one that falls
 is a failure.
 
-\subsection{Legs and jump supervisor}
+\subsection{Legs}
 
 In this controller the legs are a positioning device: they hold the wheel under the hip at the commanded leg
 length. Each leg has a Cartesian PD on the position $p$ of the wheel centre with respect to the hip, with the
@@ -609,14 +473,6 @@ Working in Cartesian space was the remedy for the limit cycle mentioned in the i
 inherited from the position-servo controller were so high that, at 500\,Hz, a single control step could reverse the
 velocity of the light leg links; the Cartesian gains correspond to a joint stiffness about three times lower, and
 the oscillation disappears.
-
-The jump is handled by a supervisor with seven states: balance, preload (a squat), thrust (a fast extension),
-flight, landing, recovery and settling. It changes the leg targets and gains from one phase to the next and
-scales the authority of the capture-point loop, which is reduced during thrust and landing and removed in flight,
-when the wheels are only damped. The transitions that depend on contact---take-off and touchdown---combine the
-contact sensors, filtered with hysteresis and a short debounce, with the clearance of the wheels and the vertical
-velocity of the CoM. A robot that jumps is a hybrid system, and a single spurious contact reading at the wrong
-moment would switch the control law in mid-air.
 
 A compensation of the \emph{lateral} ZMP was also implemented: in a turn the legs are made unequal in length so
 that the torso leans into the curve, as a cyclist does, with the same preview as in the sagittal plane. It is
@@ -636,10 +492,10 @@ it. Balance is fast and unstable, but it is well described by a linear model, so
 wheels. The motion of the upper body is slower, but it is subject to limits---friction, leg length, available
 force---so it is given to an MPC, which can handle constraints. The MPC does not command torques: it decides the
 offset $\delta$ of the CoM and the vertical force $F_z$, and virtual model control turns them into leg torques.
-A Kalman filter provides the state. Figure~\ref{fig:mpcarch} shows the implementation in \code{rotino\_mpc}.
+A Kalman filter provides the state. Figure~\ref{fig:mpcarch} shows the resulting architecture.
 
 Unlike the PID of the previous section, this controller uses only the sensors that a real robot would carry: the
-IMU and the joint encoders. The true pose published by the simulator is read only to log the estimation error.
+IMU and the joint encoders. The true pose given by the simulator is used only to evaluate the estimation error.
 
 \begin{figure}[t]
   \centering
@@ -685,9 +541,9 @@ position and velocity obtained from odometry:
   \label{eq:kalman}
 \end{equation}
 At steady state the filter behaves as a complementary filter: odometry prevails at low frequency, the IMU above a
-few hertz. Because the three axes are decoupled, the implementation runs three independent two-state filters, which
-is equivalent and cheaper. During the flight phase of a jump the wheels carry no information, and the correction
-is simply skipped; the paper obtains the same effect by inflating the measurement noise. The lean $\theta$ and the
+few hertz. Because the three axes are decoupled, three independent two-state filters are used, which
+is equivalent and cheaper. If the wheels lose contact with the ground they carry no information, and the correction
+is simply skipped. The lean $\theta$ and the
 length $l$ of the pendulum do not need a filter: they follow from the orientation given by the IMU and from the
 leg kinematics.
 
@@ -701,10 +557,9 @@ minimises
   \label{eq:lqr}
 \end{equation}
 The model depends on the length of the pendulum, hence so does the gain: this is what the paper calls a
-time-varying LQR. In the implementation the Riccati equation is solved once, at start-up, for 25 leg postures
-between a deep squat and full extension, and the gain is interpolated on the current value of $l$. The solver is
-part of the package: it builds the Hamiltonian matrix of the problem and extracts the solution from its stable
-invariant subspace.
+time-varying LQR. Here the Riccati equation is solved once, in advance, for 25 leg postures
+between a deep squat and full extension, and the gain is interpolated on the current value of $l$. The solution
+is obtained from the stable invariant subspace of the Hamiltonian matrix of the problem.
 
 Three aspects of the design deserve a comment.
 
@@ -719,7 +574,7 @@ The cost of this choice appears in the results on curved paths.
 Over the whole range of leg lengths the gains change by about 15\,\%, and they keep the dominant closed-loop poles
 almost exactly where they were designed. With the nominal gain kept fixed the loop remains stable, but its poles
 move with the posture. For RoTino scheduling is therefore a refinement that makes the response independent of the
-height, rather than a necessity as it is for the large robot of the paper.
+height.
 
 \emph{The reference.} The LQR is not asked to follow the trajectory requested by the operator. Its reference is
 built from the output of the MPC,
@@ -749,26 +604,20 @@ and applies the first element of each sequence. It runs at 100\,Hz, once every f
 \paragraph{Two small problems instead of one.} Over the horizon the factor $(g+\ddot z)/h$ of \eqref{eq:lumped} is
 frozen at its current value. The horizontal and the vertical dynamics then become two independent double
 integrators, one driven by $\delta$ and one by $F_z$, and \eqref{eq:mpc} splits into two problems with a single
-input each. Each double integrator is discretised exactly rather than with the forward-Euler rule of the paper,
-which costs nothing and removes a source of error at a step of 20\,ms.
+input each. Each double integrator is discretised exactly over the step of 20\,ms.
 
-\paragraph{The constraints, and which one matters.} The paper bounds the offset with the friction limit, $\mu h$,
-and with the reach of the leg. For RoTino neither is ever active. With the friction coefficient of the simulation
-the first bound would allow the CoM to be 36\,cm away from the wheels of a robot whose pendulum is 16\,cm long, and
-the second allows 18\,cm. A third, much tighter bound was therefore added: $\delta_{max}=3$\,cm, which corresponds to a
-lean of about $10^\circ$ and to an acceleration of a little less than $2\unit{m/s^2}$. This is the constraint that
-shapes the behaviour of the controller: whatever happens, the plan never asks the robot to lean more than that. The
+\paragraph{The constraints.} The offset is bounded by $\delta_{max}=3$\,cm, which corresponds to a lean of about
+$10^\circ$: whatever happens, the plan never asks the robot to lean more than that. The
 vertical force is bounded between a fraction and a multiple of the weight of the upper body, so that the wheels
-neither lift off nor are pressed beyond what the legs can deliver; the upper bound is raised during the thrust of a
-jump.
+neither lift off nor are pressed beyond what the legs can deliver.
 
 \paragraph{Solving the problem.} Eliminating the states (\emph{condensing}~\cite{jerez2011}) leaves a quadratic
 program in the 25 inputs alone, whose only constraints are bounds on the variables. A problem of this kind does
 not need a general solver: the projection onto the bounds is a simple clipping, so a projected gradient method is
-enough. The package implements its accelerated version (FISTA~\cite{beck2009}), started from the previous solution
+enough. Its accelerated version (FISTA~\cite{beck2009}) is used, started from the previous solution
 shifted by one step. Figure~\ref{fig:mpcplan} shows a plan in which the bound is active and the convergence of the
 solver: with the warm start, a few tens of iterations bring the cost to within a negligible distance of the
-optimum, and a complete update takes about a millisecond in Python, a tenth of the period available.
+optimum, and a complete update takes a small fraction of the period available.
 
 \begin{figure}[t]
   \centering
@@ -792,39 +641,7 @@ planned force $F_z$. The height is therefore not held by a stiffness: it is regu
 Seen from the ground, each leg behaves as a force-controlled suspension rather than as a rigid strut. This is the
 Cartesian impedance idea used in the course to make a legged robot compliant at its contacts, with the vertical
 stiffness set to zero and the weight supplied as a feedforward. Its consequences on uneven ground are among the
-clearest results of the next section. The jump uses the same blocks: the height reference squats and then
-accelerates upward so that the CoM leaves the ground at a chosen speed, the force bound is raised for the thrust,
-and when contact is lost a virtual spring retracts the wheels under the body and holds them there until touchdown.
-
-\subsection{Summary of the differences from the paper}
-
-Table~\ref{tab:diff} collects the points in which the implementation departs from~\cite{cui2022}. None of them
-changes the architecture; they adapt it to a robot almost twenty times lighter, to torque control in simulation and to
-the choice of writing every numerical block in the workspace.
-
-\begin{table}[t]
-  \centering\small
-  \caption{The architecture of Cui \emph{et al.}\ and its implementation on RoTino.}
-  \label{tab:diff}
-  \begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
-    \toprule
-    & Paper & This implementation \\
-    \midrule
-    Model parameters & table of the 80\,kg prototype; rod inertia $m_bl^2/3$ & computed from the URDF; real inertia
-      of the upper body for each posture \\
-    LQR gain & function of the pendulum length & 25 gains computed at start-up and interpolated; own Riccati solver \\
-    LQR weights & weight matrices $Q$, $R$ & common and differential torque weighted separately, to avoid a leg
-      resonance \\
-    MPC model & one model, forward-Euler discretisation & two decoupled double integrators, exact discretisation \\
-    MPC constraints & friction, leg reach, vertical force & the same, plus a 3\,cm bound on the offset, the only one
-      active on this robot \\
-    QP solver & not specified & projected accelerated gradient with warm start \\
-    Kalman filter & one planar filter, larger noise in flight & three single-axis filters, no correction in flight \\
-    Heading & LQR only & LQR with friction feedforward and a slow integral \\
-    Rates & 100, 500 and 1000\,Hz & MPC at 100\,Hz, everything else at 500\,Hz \\
-    \bottomrule
-  \end{tabularx}
-\end{table}
+clearest results of the next section.
 
 % =====================================================================================================
 \section{Benchmark and results}
@@ -833,13 +650,14 @@ the choice of writing every numerical block in the workspace.
 \subsection{Method}
 \label{sec:benchmark}
 
-The benchmark runs a catalogue of twelve scenarios with both controllers, one after the other, each from a clean
+The benchmark runs a catalogue of eleven scenarios with both controllers, one after the other, each from a clean
 simulation: standing balance, an impulsive push, a constant force, a trapezoidal speed profile, a back-and-forth
-motion, a change of height, a slow and a fast S-curve, the three uneven platforms and a jump. World, robot, torque
-interfaces and scenario arguments are identical; a logger records every signal at 500\,Hz, and the comparison is
-rebuilt from the logs. The four tests with which the paper validates its controller---change of height, recovery
-from an impact, speed tracking and jump---are all in the catalogue, the speed profile with the same acceleration;
-the curved paths, the constant force and the uneven ground were added to stress what those tests leave out. The
+motion, a change of height, a slow and a fast S-curve, and three stretches of uneven ground (speed bumps 2\,cm high, a
+5\,\% ramp leading to a raised plateau, and a field of tiles of different heights that the two wheels cross on
+different columns). In every run the robot is first held upright and then released, and time in the plots
+is counted from the release. World, robot,
+actuation and scenarios are identical, and every signal is recorded at 500\,Hz. The catalogue includes the tests with which the paper validates its controller in balance: change of height, recovery
+from an impact and speed tracking. The
 results below come from one complete execution of the suite.
 
 \paragraph{Reconstructing the ZMP.} Since the simulator does not report contact forces, the centre of pressure
@@ -850,19 +668,18 @@ mass $m_i$ and position $(x_i,y_i,z_i)$, on flat ground:
   \label{eq:zmp}
 \end{equation}
 and likewise for $y_{zmp}$, where $L_i$ is the angular momentum of the link about its own centre. Positions come
-from the true pose of the torso and from the joint angles through the model library; accelerations are obtained by
-fitting a parabola to a short window of samples, which avoids differentiating noise twice. The same code runs
-offline on the logs and online in the dashboard. Two quantities are derived from it: the lateral position of the
+from the true pose of the torso and from the joint angles through the kinematics of the robot; accelerations are
+obtained by fitting a parabola to a short window of samples, which avoids differentiating noise twice. Two
+quantities are derived from it: the lateral position of the
 ZMP as a fraction of the half-distance between the wheels, where 100\,\% means that the inner wheel is about to lift,
 and the load on each wheel. In the direction of travel the ZMP must lie on the contact line, which provides a
 check: on flat ground the reconstructed point stays within a millimetre of it.
-
-\paragraph{How to read the comparison.} Three cautions apply. First, the PID reads the pose of the torso from the
+Three cautions apply. First, the PID reads the pose of the torso from the
 simulator, whereas the other controller estimates it; a perfect measurement favours the PID in smoothness. Second,
-for the same reason the position that each controller logs is not the same signal. All the positions shown below are
-therefore recomputed for both from the true pose, and so are the heights and the wheel clearances. This matters: on
-straight paths the tracking error computed in this way is similar for the two laws, whereas the internal logs would
-suggest a clear advantage of the MPC, simply because its error is measured against its own odometry, which
+for the same reason the position that each controller measures is not the same signal. All the positions shown below
+are therefore recomputed for both from the true pose, and so are the heights. This matters: on
+straight paths the tracking error computed in this way is similar for the two laws, whereas the internal signals of
+the controllers would suggest a clear advantage of the MPC, simply because its error is measured against its own odometry, which
 can overestimate the distance travelled by up to about one per cent. Third, each scenario was run once, and small
 differences fall within the variability from run to run. For these reasons only the differences that are large, and
 that can be explained from the design of the controllers, are discussed.
@@ -886,15 +703,15 @@ second, so the lean never exceeds about $11^\circ$, but the braking is gentler: 
 needs a few oscillations to settle. Neither behaviour is right or wrong. They are the direct expression of the two
 limits written in the controllers, $a_{max}$ in \eqref{eq:outer} and $\delta_{max}$ in \eqref{eq:mpc}, and they
 show what a constraint in the plan achieves: the MPC keeps the posture within a prescribed envelope and
-accepts a larger displacement in exchange. The linear model of Section~\ref{sec:authority}, driven by the control
-code, predicts a peak of about $19^\circ$ for the PID: the simple model is a good guide to the simulated robot.
+accepts a larger displacement in exchange. The linear model of Section~\ref{sec:authority}
+predicts a peak of about $19^\circ$ for the PID: the simple model is a good guide to the simulated robot.
 
 The constant force (Fig.~\ref{fig:disturb}b) asks a different question: what remains once the transient is over?
 Both robots end up leaning into the force by the same angle, as statics demands. What differs is where they stand.
 The PID stops about 18\,cm from the starting point, the MPC about 10\,cm. One might expect the integral term of the
 PID to cancel the error. It does not, because the lean that balances this force requires an integral larger than its
 anti-windup bound: the integral saturates, and the rest of the offset must come from the proportional term, that is
-from a position error. Inserting the gains of the code in~\eqref{eq:outer} gives 18\,cm, exactly what is measured.
+from a position error. Inserting the gains in~\eqref{eq:outer} gives 18\,cm, exactly what is measured.
 The MPC has no integral action at all; its steady error is the point where the offset that its cost function is
 willing to command for that position error equals the one needed to hold the force. A disturbance observer, such as
 the momentum-based estimator presented in the course, would remove the error in both controllers and is the most
@@ -932,7 +749,7 @@ during the transients, although with different shapes. The back-and-forth scenar
 
 On the S-curves the sagittal behaviour is that of the trapezoid, and the interest shifts to the plane
 (Fig.~\ref{fig:scurve}). The PID stays within about a centimetre and a half of the path; the MPC deviates by up to
-6\,cm and ends about 6\,cm to its side. The cause is not the estimator. Replaying the odometry on the logged
+6\,cm and ends about 6\,cm to its side. The cause is not the estimator. Replaying the odometry on the recorded
 encoder and gyroscope signals reproduces the true final position to within a few millimetres sideways, so the
 controller knew where it was. The cause is the heading loop. To stay clear of the leg resonance, the LQR was given
 a yaw stiffness that is half that of the PID, and with the friction of the wheels on the ground a soft loop leaves
@@ -963,8 +780,8 @@ with a pitch deviation of a degree or two; the more interesting cases are the ot
 legs: the hip angle hardly moves, the pitch deviates by about $5^\circ$ and returns without oscillating. In the MPC
 the disturbance propagates through the whole chain: the pitch error changes the planned offset, the legs swing by
 almost $20^\circ$ to realise it, and the pitch reaches about $9^\circ$ and oscillates between one bump and the
-next. In both cases the torso rises by the height of the bump. The logs of the benchmark suggested otherwise,
-because the MPC estimates its height assuming flat ground and so does not see the bump at all; the comparison in the
+next. In both cases the torso rises by the height of the bump. The height estimated by the MPC suggested otherwise,
+because its estimator assumes flat ground and so does not see the bump at all; the comparison in the
 figure uses the true pose for both.
 
 \emph{Tiles.} Here the two wheels meet steps of different height, and the roles reverse. With the PID the torso
@@ -975,24 +792,6 @@ a degree, the excursion of the ZMP is roughly halved and the wheels remain bette
 controls the roll explicitly. The result is a property of virtual model control: each leg pushes with half of the
 planned force whatever its length, so it lengthens or shortens to follow the step under its wheel. A choice made
 for another reason---leaving the height to the MPC---turns out to give the robot a suspension.
-
-\subsection{Jump}
-
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=\linewidth]{fig_jump.pdf}
-  \caption{The jump, with wheel clearance and height of the centre of mass computed from the true pose.}
-  \label{fig:jump}
-\end{figure}
-
-Both controllers make the robot jump and recover (Fig.~\ref{fig:jump}). The CoM rises by about 7\,cm in both cases
-and the flight lasts between two and three tenths of a second, but the two jumps look different. The PID replays a
-fixed sequence of leg postures and holds the take-off posture in the air: the wheels clear the ground by about
-4\,cm. The MPC squats deeper, pushes with a planned force and retracts the legs in flight, which doubles the
-clearance of the wheels for the same height of the CoM. Landing is the critical moment. The PID lands softly,
-because its supervisor lowers the authority of the balance loop during landing and recovery, and then takes about
-four seconds to settle. The MPC reacts at once and with all the available torque---the wheels reach their limit at
-touchdown---and after a sharp transient of the pitch it is steady in less than three seconds.
 
 \subsection{Overall picture}
 
@@ -1021,8 +820,6 @@ which follows from the structure of the two controllers.
     Ramp & peak pitch & \multicolumn{2}{c}{below $2^\circ$ for both} \\
     Tiles & peak roll & $3^\circ$ & $0.5^\circ$ \\
           & lateral ZMP, share of the margin used & about 60\,\% & about 35\,\% \\
-    Jump & wheel clearance & 4\,cm & 9\,cm \\
-         & time to settle after landing & about 4\,s & less than 3\,s \\
     \bottomrule
   \end{tabularx}
 \end{table}
@@ -1043,43 +840,14 @@ metrics of the benchmark suggested, because the two controllers measure position
 Comparing controllers fairly requires comparing the same physical quantities, and a simulator, which offers the true
 state, makes this possible---provided that one remembers to use it.
 
-% =====================================================================================================
-\section{Relation to the topics of the course}
 
-The project touched most of the chapters of the course, and it is useful to say where.
-
-\begin{itemize}
-  \item \emph{Configuration space and underactuation.} The count of the degrees of freedom of the floating base, the
-        topology of the configuration space and the reading of underactuation as a property of the model
-        (Section~\ref{sec:model}) apply the introductory part of the course to a robot that changes model three
-        times, from the full floating base to a two-state pendulum.
-  \item \emph{Wheeled robots.} Rolling without slipping gives the Pfaffian constraints~\eqref{eq:rolling}, the
-        odometry used by the Kalman filter and the reason why the lateral guidance must fade at standstill. The
-        reference paths are planned with a geometric path and a separate timing law. What is new with respect to
-        the course is that the kinematic model is only the outer shell of a dynamic problem.
-  \item \emph{Aerial robots.} RoTino shares with a quadrotor the fact that it translates by tilting: the hierarchical
-        structure, in which an outer loop turns a position error into a desired tilt for a faster inner loop, is the
-        one of the cascaded PID, with the ZMP offset in the role of the thrust direction.
-  \item \emph{Legged robots.} The floating base, the unilateral contact, the friction bound, the ZMP and its relation
-        with the support polygon, and the lumped-mass simplification of the centroidal dynamics are the vocabulary of
-        Sections~\ref{sec:pid}--\ref{sec:results}. The course formulates the control of a quadruped as a quadratic
-        program with constraints; here a much smaller program is solved over a horizon, and the comparison with a
-        controller that has no constraints shows what they are for. Virtual model control is the Cartesian impedance
-        of the course applied leg by leg, and the jump adds the hybrid nature of contact.
-\end{itemize}
-
-What the project required beyond the course was mainly the capture point and the preview of the ZMP, the
-gain-scheduled LQR, the condensed formulation and first-order solution of the MPC, and the reconstruction of the
-ZMP from multibody dynamics.
-
-% =====================================================================================================
 \section{Conclusions}
 
 A wheeled biped was modelled, simulated with torque control and balanced with two controllers built on the same
 physical idea---the horizontal offset between the centre of mass and the contact sets the acceleration---and on
 opposite philosophies. The cascaded PID treats that offset as the output of a capture-point loop and anticipates
 planned motions with a preview. The architecture of Cui \emph{et al.}\ plans it with a constrained MPC and delegates
-balance to a gain-scheduled LQR and compliance to the virtual model of the legs. On twelve scenarios neither is
+balance to a gain-scheduled LQR and compliance to the virtual model of the legs. On eleven scenarios neither is
 uniformly better. The cascade is smoother and more accurate on planned motions; the predictive architecture keeps
 the posture bounded under disturbances and behaves better on uneven ground. In almost every case the difference
 could be traced to a specific line of the design: a bound, a weight, a stiffness.

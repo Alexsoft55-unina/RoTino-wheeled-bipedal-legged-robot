@@ -226,20 +226,10 @@ def fig_vlwip_lqr(m):
 
 # ---------------------------------------------------------------------------- LIPM preview
 def fig_lipm_preview(m):
-    from rotino_pid.zmp_balance import LipmPreview, ZmpSagittalBalance, trapezoid_path, trapezoid_reference
+    from rotino_pid.zmp_balance import LipmPreview, trapezoid_path, trapezoid_reference
     _, _, h = lumped(m)
     w = math.sqrt(G / h)
-    bal = ZmpSagittalBalance.from_model(m)
-    fig, (a, b) = plt.subplots(1, 2, figsize=(FULL_W, 1.9), gridspec_kw={'width_ratios': [1.0, 1.9], 'wspace': 0.27})
-    u = np.linspace(-0.7, 0.7, 401)
-    a.fill_between(u, 0.5 * w * np.exp(-w * np.abs(u)), color='#d9d9d9', lw=0)
-    a.plot(u, 0.5 * w * np.exp(-w * np.abs(u)), color=INK)
-    for x in (-1 / w, 1 / w):
-        a.axvline(x, color=MUTED, lw=0.6, ls=(0, (3, 2)))
-    a.text(1 / w + 0.03, 0.5 * w * 0.93, r'$\pm 1/\omega$' + f'\n$= {1 / w:.2f}$ s', va='top', fontsize=7.5)
-    a.set_xlabel('time offset $u$ [s]')
-    a.set_ylabel('kernel weight [1/s]')
-    panel_label(a, '(a) preview kernel')
+    fig, b = plt.subplots(figsize=(0.72 * FULL_W, 2.0))      # included at 0.72 of the text width
 
     t0 = 2.0
     path = lambda t: trapezoid_path(np.asarray(t) - t0, 1.0, 0.6, 2.0)
@@ -256,7 +246,6 @@ def fig_lipm_preview(m):
     b.set_ylabel(r'acceleration [m/s$^2$]')
     b.set_ylim(-0.95, 1.3)
     b.legend(loc='upper right')
-    panel_label(b, '(b) trapezoidal speed profile: 1 m/s, 0.6 m/s$^2$')
     save(fig, 'fig_lipm_preview.pdf')
     print('   preview: the reference acceleration exceeds 5 %% of its plateau %.2f s before the start' % (t0 - lead))
 
