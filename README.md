@@ -395,4 +395,7 @@ bash docs/compila_pdf.sh Relazione_Controllo_RoTino.tex
 - **`Package 'rotino_...' not found`.** Manca il `source install/setup.bash` (o `setup.zsh`) nel terminale.
 - **Dashboard che non parte.** Manca `pyqtgraph`: `pip install pyqtgraph`.
 - **Avviso `Unable to import Axes3D` di matplotlib.** Compare quando matplotlib è installato sia da `apt` sia
-  da `pip`; i grafici del benchmark vengono prodotti lo stesso.
+  da `pip`; i grafici del benchmark vengono prodotti lo stesso
+
+
+  
