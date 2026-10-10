@@ -6,20 +6,7 @@ Il workspace contiene due leggi di controllo intercambiabili e gli strumenti per
 - **PID** — PID in cascata con lo Zero Moment Point come variabile di equilibrio (`rotino_pid`);
 - **MPC** — MPC sulla parte superiore + TV-LQR sulle ruote + VMC sulle gambe, da Cui et al., *Micromachines* 2022 (`rotino_mpc`).
 
-## Indice
 
-- [Package](#package)
-- [Dipendenze](#dipendenze)
-- [Compilazione](#compilazione)
-- [Launch file](#launch-file)
-- [Argomenti di lancio](#argomenti-di-lancio)
-- [Comandi manuali](#comandi-manuali)
-- [Dashboard](#dashboard)
-- [Benchmark PID vs MPC](#benchmark-pid-vs-mpc)
-- [Altri strumenti](#altri-strumenti)
-- [Test](#test)
-- [Documentazione](#documentazione)
-- [Problemi noti](#problemi-noti)
 
 ## Package
 
@@ -48,7 +35,6 @@ pip install pyqtgraph        # non è dichiarato nei package.xml: rosdep non lo 
 Opzionali:
 
 - PlotJuggler, per aprire i CSV del logger: `sudo apt install ros-humble-plotjuggler-ros`
-- TeX Live (`pdflatex`), per ricompilare i PDF di `docs/`
 
 ## Compilazione
 
@@ -79,7 +65,7 @@ ros2 launch rotino_mpc rotino_mpc.launch.py
 ros2 launch rotino_pid rotino_pid.launch.py --show-args
 ```
 
-Il robot parte agganciato a un'ancora che lo tiene in piedi; il controllore lo rilascia da solo all'avvio e i
+Il robot parte bloccato; il controllore lo rilascia da solo all'avvio e i
 movimenti programmati cominciano 2 s dopo il rilascio.
 
 `robot.launch.py` non ha un controllore predefinito e va lanciato indicandolo:
@@ -207,7 +193,7 @@ Topic utili da osservare:
 | `/rotino/planar` | Riferimento, posa ed errori lungo la traiettoria planare |
 | `/rotino/zmp_ctrl` | Solo PID: ZMP desiderato e misurato, longitudinale e laterale |
 | `/rotino/estimation_error` | Errore dello stimatore dell'MPC |
-| `/rotino/odom`, `/rotino/imu`, `/joint_states` | Verità a terra di Gazebo, IMU e giunti |
+| `/rotino/odom`, `/rotino/imu`, `/joint_states` | Odometria, IMU e giunti |
 | `/wheel_effort_controller/commands`, `/leg_effort_controller/commands` | Coppie comandate [Nm] |
 
 ## Dashboard
@@ -361,26 +347,7 @@ colcon test-result --verbose
 python3 -m pytest src/rotino_pid/test src/rotino_benchmark/test -q
 ```
 
-## Documentazione
 
-| File | Argomento |
-|---|---|
-| `docs/Tecniche_di_controllo.md` | Panoramica delle tecniche di controllo |
-| `docs/PID_ZMP.md` | Controllore PID in cascata sullo ZMP |
-| `docs/MPC_Teoria.md` | Teoria dell'MPC e del TV-LQR |
-| `docs/VMC_e_Kalman.md` | Virtual model control e filtro di Kalman |
-| `docs/Studio_ZMP.md` | Ricostruzione e analisi dello ZMP |
-| `docs/Confronto_PID_MPC.md` | Confronto tra le due leggi |
-| `docs/Analisi_DoF_Topologia.md` | Gradi di libertà e topologia del robot |
-| `docs/Storico_lavoro.md` | Cronologia del lavoro |
-| `docs/presentazione/` | Presentazione (`RoTino_Controllo.pptx`) e script che la generano |
-
-Per ricompilare i PDF dai sorgenti LaTeX:
-
-```bash
-bash docs/compila_pdf.sh                       # tutti i .tex di docs/
-bash docs/compila_pdf.sh Relazione_Controllo_RoTino.tex
-```
 
 ## Problemi noti
 
